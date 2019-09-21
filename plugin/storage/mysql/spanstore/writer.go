@@ -33,8 +33,8 @@ const (
 	insertSpan = `
 		INSERT
 		INTO traces(trace_id, span_id, span_hash, parent_id, operation_name, flags,
-				    start_time, duration)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+				    start_time, duration, tags, logs, refs, process)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 )
 
 var errTraceNotFound = errors.New("trace was not found")
@@ -70,7 +70,7 @@ func WithConfiguration(configuration config.Configuration) *Store {
 func (m *Store) WriteSpan(span *model.Span) error {
 	ds := dbmodel.FromDomain(span)
 	res, err := m.mysql_client.Exec(insertSpan,
-		ds.TraceID.String(),
+		ds.TraceID,
 		ds.SpanID,
 		ds.SpanHash,
 		ds.ParentID,
@@ -78,10 +78,10 @@ func (m *Store) WriteSpan(span *model.Span) error {
 		ds.Flags,
 		ds.StartTime,
 		ds.Duration,
-		// ds.Tags,
-		// ds.Logs,
-		// ds.Refs,   // span 引用关系，是否是子span。有parentSpan
-		// ds.Process,
+		ds.Tags,
+		ds.Logs,
+		ds.Refs,   // span 引用关系，是否是子span。有parentSpan
+		ds.Process,
 	)
 	
 	if err != nil {

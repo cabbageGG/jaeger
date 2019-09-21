@@ -52,6 +52,7 @@ func FromDomain(span *model.Span) *Span {
 type converter struct{}
 
 func (c converter) fromDomain(span *model.Span) *Span {
+	trace_id  := c.toDBTraceid(span.TraceID)
 	tags := c.toDBTags(span.Tags)
 	logs := c.toDBLogs(span.Logs)
 	refs, parent_id := c.toDBRefs(span.References)
@@ -59,9 +60,9 @@ func (c converter) fromDomain(span *model.Span) *Span {
 	spanHash, _ := model.HashCode(span)
 
 	return &Span{
-		TraceID:       span.TraceID.String(),
+		TraceID:       trace_id,
 		SpanID:        int64(span.SpanID),
-		ParentID:      parent_id, 
+		ParentID:      parent_id,
 		OperationName: span.OperationName,
 		Flags:         int32(span.Flags),
 		StartTime:     int64(model.TimeAsEpochMicroseconds(span.StartTime)),
@@ -75,22 +76,25 @@ func (c converter) fromDomain(span *model.Span) *Span {
 	}
 }
 
-func (c converter) toDBTags(tags []model.KeyValue) string {
-	data, err := json.Marshal(tags)
+func jsonMarshal(v interface{}) string {
+	data, err := json.Marshal(v)
 	if err != nil {
 		fmt.Println(err)
-		return "toDBTags Marshal error"
+		return fmt.Sprintf("jsonMarshal Marshal error: %s", err)
 	}
 	return string(data)
 }
 
+func (c converter) toDBTraceid(TraceID model.TraceID) string {
+	return jsonMarshal(TraceID)
+}
+
+func (c converter) toDBTags(tags []model.KeyValue) string {
+	return jsonMarshal(tags)
+}
+
 func (c converter) toDBLogs(logs []model.Log) string {
-	data, err := json.Marshal(logs)
-	if err != nil {
-		fmt.Println(err)
-		return "toDBLogs Marshal error"
-	}
-	return string(data)
+	return jsonMarshal(logs)
 }
 
 func (c converter) toDBRefs(refs []model.SpanRef) (string, int64) {
@@ -98,25 +102,17 @@ func (c converter) toDBRefs(refs []model.SpanRef) (string, int64) {
 	var parent_id int64
 	for i, r := range refs {
 		retMe[i] = SpanRef{
-			TraceID: r.TraceID.String(),
+			TraceID: r.TraceID,
 			SpanID:  int64(r.SpanID),
 			RefType: domainToDBRefMap[r.RefType],
 		}
-		parent_id = int64(r.SpanID)
+		if v := domainToDBRefMap[r.RefType]; v == childOf{
+			parent_id = int64(r.SpanID)
+		}
 	}
-	data, err := json.Marshal(retMe)
-	if err != nil {
-		fmt.Println(err)
-		return "Marshal error", parent_id
-	}
-	return string(data), parent_id
+	return jsonMarshal(retMe), parent_id
 }
 
 func (c converter) toDBProcess(process *model.Process) string {
-	data, err := json.Marshal(process)
-	if err != nil {
-		fmt.Println(err)
-		return "toDBProcess Marshal error"
-	}
-	return string(data)
+	return jsonMarshal(process)
 }

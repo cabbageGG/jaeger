@@ -20,7 +20,7 @@ import (
 	_"encoding/binary"
 	_ "encoding/json"
 
-	_ "github.com/jaegertracing/jaeger/model"
+	"github.com/jaegertracing/jaeger/model"
 )
 
 const (
@@ -56,7 +56,7 @@ type Span struct {
 
 // SpanRef is the UDT representation of a Jaeger Span Reference.
 type SpanRef struct {
-	RefType string  `json:"ref_type"`
-	TraceID string `json:"trace_id"`
-	SpanID  int64   `json:"sapn_id"`
+	RefType string  		`json:"ref_type"`
+	TraceID model.TraceID   `json:"trace_id"`
+	SpanID  int64   		`json:"sapn_id"`
 }
