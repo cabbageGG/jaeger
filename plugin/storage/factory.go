@@ -30,6 +30,7 @@ import (
 	"github.com/jaegertracing/jaeger/plugin/storage/grpc"
 	"github.com/jaegertracing/jaeger/plugin/storage/kafka"
 	"github.com/jaegertracing/jaeger/plugin/storage/memory"
+	"github.com/jaegertracing/jaeger/plugin/storage/mysql"
 	"github.com/jaegertracing/jaeger/storage"
 	"github.com/jaegertracing/jaeger/storage/dependencystore"
 	"github.com/jaegertracing/jaeger/storage/spanstore"
@@ -39,6 +40,7 @@ const (
 	cassandraStorageType     = "cassandra"
 	elasticsearchStorageType = "elasticsearch"
 	memoryStorageType        = "memory"
+	mysqlStorageType         = "mysql"
 	kafkaStorageType         = "kafka"
 	grpcPluginStorageType    = "grpc-plugin"
 	badgerStorageType        = "badger"
@@ -96,6 +98,8 @@ func (f *Factory) getFactoryOfType(factoryType string) (storage.Factory, error) 
 		return badger.NewFactory(), nil
 	case grpcPluginStorageType:
 		return grpc.NewFactory(), nil
+	case mysqlStorageType:
+		return mysql.NewFactory(), nil
 	default:
 		return nil, fmt.Errorf("unknown storage type %s. Valid types are %v", factoryType, AllStorageTypes)
 	}

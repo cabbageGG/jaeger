@@ -121,8 +121,13 @@ func (sp *spanProcessor) saveSpan(span *model.Span) {
 		sp.logger.Error("Failed to save span", zap.Error(err))
 		sp.metrics.SavedErrBySvc.ReportServiceNameForSpan(span)
 	} else {
-		sp.logger.Debug("Span written to the storage by the collector",
-			zap.Stringer("trace-id", span.TraceID), zap.Stringer("span-id", span.SpanID))
+		sp.logger.Info("Span written to the storage by the collector",
+			zap.Stringer("trace-id", span.TraceID), zap.Stringer("span-id", span.SpanID),
+			zap.Any("OperationName", span.OperationName), zap.Any("References", span.References),
+			zap.Any("Flags", span.Flags), zap.Any("StartTime", span.StartTime),
+			zap.Any("Duration", span.Duration), zap.Any("Tags", span.Tags),
+			zap.Any("Logs", span.Logs), zap.Any("Process", span.Process),
+			zap.Any("ProcessID", span.ProcessID), zap.Any("Warnings", span.Warnings))
 		sp.metrics.SavedOkBySvc.ReportServiceNameForSpan(span)
 	}
 	sp.metrics.SaveLatency.Record(time.Since(startTime))

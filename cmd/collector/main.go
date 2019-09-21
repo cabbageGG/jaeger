@@ -64,6 +64,10 @@ const serviceName = "jaeger-collector"
 func main() {
 	svc := flags.NewService(ports.CollectorAdminHTTP)
 
+	if os.Getenv(storage.SpanStorageTypeEnvVar) == "" {
+		os.Setenv(storage.SpanStorageTypeEnvVar, "mysql") // other storage types default to SpanStorage
+	}
+
 	storageFactory, err := storage.NewFactory(storage.FactoryConfigFromEnvAndCLI(os.Args, os.Stderr))
 	if err != nil {
 		log.Fatalf("Cannot initialize storage factory: %v", err)
@@ -82,6 +86,12 @@ func main() {
 			if err := svc.Start(v); err != nil {
 				return err
 			}
+			fmt.Printf("url:%s\n", v.GetString(url))
+			fmt.Printf("user:%s\n", v.GetString(user))
+			fmt.Printf("password:%s\n", v.GetString(password))
+			fmt.Printf("host:%s\n", v.GetString(host))
+			fmt.Printf("port:%d\n", v.GetInt(port))
+			fmt.Printf("db:%s\n", v.GetString(db))
 			logger := svc.Logger // shortcut
 			baseFactory := svc.MetricsFactory.Namespace(metrics.NSOptions{Name: "jaeger"})
 			metricsFactory := baseFactory.Namespace(metrics.NSOptions{Name: "collector"})
