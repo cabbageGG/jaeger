@@ -16,11 +16,11 @@
 package dbmodel
 
 import (
-	"bytes"
-	"encoding/binary"
-	"encoding/json"
+	_ "bytes"
+	_"encoding/binary"
+	_ "encoding/json"
 
-	"github.com/jaegertracing/jaeger/model"
+	_ "github.com/jaegertracing/jaeger/model"
 )
 
 const (
@@ -54,78 +54,9 @@ type Span struct {
 	SpanHash      int64
 }
 
-// KeyValue is the UDT representation of a Jaeger KeyValue.
-type KeyValue struct {
-	Key          string  `cql:"key"`
-	ValueType    string  `cql:"value_type"`
-	ValueString  string  `cql:"value_string"`
-	ValueBool    bool    `cql:"value_bool"`
-	ValueInt64   int64   `cql:"value_long"`   // using more natural column name for Cassandra
-	ValueFloat64 float64 `cql:"value_double"` // using more natural column name for Cassandra
-	ValueBinary  []byte  `cql:"value_binary"`
-}
-
-// Log is the UDT representation of a Jaeger Log.
-type Log struct {
-	Timestamp int64      `cql:"ts"`
-	Fields    []KeyValue `cql:"fields"`
-}
-
 // SpanRef is the UDT representation of a Jaeger Span Reference.
 type SpanRef struct {
 	RefType string  `json:"ref_type"`
 	TraceID string `json:"trace_id"`
 	SpanID  int64   `json:"sapn_id"`
-}
-
-func spanRefToJsonStr(ref *SpanRef) string {
-	data, err := json.Marshal(ref)
-	if err != nil {
-		logger.Fatal("spanRefToJson marshal error", err)
-	}
-	return string(data)
-}
-
-// Process is the UDT representation of a Jaeger Process.
-type Process struct {
-	ServiceName string     `cql:"service_name"`
-	Tags        []KeyValue `cql:"tags"`
-}
-
-// TagInsertion contains the items necessary to insert a tag for a given span
-type TagInsertion struct {
-	ServiceName string
-	TagKey      string
-	TagValue    string
-}
-
-func (t TagInsertion) String() string {
-	const uniqueTagDelimiter = ":"
-	var buffer bytes.Buffer
-	buffer.WriteString(t.ServiceName)
-	buffer.WriteString(uniqueTagDelimiter)
-	buffer.WriteString(t.TagKey)
-	buffer.WriteString(uniqueTagDelimiter)
-	buffer.WriteString(t.TagValue)
-	return buffer.String()
-}
-
-// TraceIDFromDomain converts domain TraceID into serializable DB representation.
-func TraceIDFromDomain(traceID model.TraceID) TraceID {
-	dbTraceID := TraceID{}
-	binary.BigEndian.PutUint64(dbTraceID[:8], uint64(traceID.High))
-	binary.BigEndian.PutUint64(dbTraceID[8:], uint64(traceID.Low))
-	return dbTraceID
-}
-
-// ToDomain converts trace ID from db-serializable form to domain TradeID
-func (dbTraceID TraceID) ToDomain() model.TraceID {
-	traceIDHigh := binary.BigEndian.Uint64(dbTraceID[:8])
-	traceIDLow := binary.BigEndian.Uint64(dbTraceID[8:])
-	return model.NewTraceID(traceIDHigh, traceIDLow)
-}
-
-// String returns hex string representation of the trace ID.
-func (dbTraceID TraceID) String() string {
-	return dbTraceID.ToDomain().String()
 }
