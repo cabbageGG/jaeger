@@ -18,6 +18,7 @@ package dbmodel
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/json"
 
 	"github.com/jaegertracing/jaeger/model"
 )
@@ -34,21 +35,21 @@ const (
 )
 
 // TraceID is a serializable form of model.TraceID
-type TraceID [16]byte
+// type TraceID [16]byte
 
 // Span is the database representation of a span.
 type Span struct {
-	TraceID       TraceID
+	TraceID       string
 	SpanID        int64
 	ParentID      int64 // deprecated
 	OperationName string
 	Flags         int32
 	StartTime     int64
 	Duration      int64
-	Tags          []KeyValue
-	Logs          []Log
-	Refs          []SpanRef
-	Process       Process
+	Tags          string
+	Logs          string
+	Refs          string
+	Process       string
 	ServiceName   string
 	SpanHash      int64
 }
@@ -72,9 +73,17 @@ type Log struct {
 
 // SpanRef is the UDT representation of a Jaeger Span Reference.
 type SpanRef struct {
-	RefType string  `cql:"ref_type"`
-	TraceID TraceID `cql:"trace_id"`
-	SpanID  int64   `cql:"span_id"`
+	RefType string  `json:"ref_type"`
+	TraceID string `json:"trace_id"`
+	SpanID  int64   `json:"sapn_id"`
+}
+
+func spanRefToJsonStr(ref *SpanRef) string {
+	data, err := json.Marshal(ref)
+	if err != nil {
+		logger.Fatal("spanRefToJson marshal error", err)
+	}
+	return string(data)
 }
 
 // Process is the UDT representation of a Jaeger Process.
