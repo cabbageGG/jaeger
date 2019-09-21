@@ -24,6 +24,7 @@ import (
 
 	"github.com/jaegertracing/jaeger/storage/spanstore"
 	"github.com/jaegertracing/jaeger/storage/dependencystore"
+	mSpanStore "github.com/jaegertracing/jaeger/plugin/storage/mysql/spanstore"
 )
 
 // Factory implements storage.Factory and creates storage components backed by mysql store.
@@ -31,7 +32,7 @@ type Factory struct {
 	options        Options
 	metricsFactory metrics.Factory
 	logger         *zap.Logger
-	store          *Store
+	store          *mSpanStore.Store
 }
 
 // NewFactory creates a new Factory.
@@ -52,7 +53,7 @@ func (f *Factory) InitFromViper(v *viper.Viper) {
 // Initialize implements storage.Factory
 func (f *Factory) Initialize(metricsFactory metrics.Factory, logger *zap.Logger) error {
 	f.metricsFactory, f.logger = metricsFactory, logger
-	f.store = WithConfiguration(f.options.Configuration) // 建立一个mysql连接对象
+	f.store = mSpanStore.WithConfiguration(f.options.Configuration) // 建立一个mysql连接对象
 	logger.Info("Mysql storage initialized successed")
 	return nil
 }
