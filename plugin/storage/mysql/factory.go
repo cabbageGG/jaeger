@@ -60,7 +60,7 @@ func (f *Factory) Initialize(metricsFactory metrics.Factory, logger *zap.Logger)
 
 // CreateSpanReader implements storage.Factory
 func (f *Factory) CreateSpanReader() (spanstore.Reader, error) {
-	return nil, nil
+	return f.store, nil
 }
 
 // CreateSpanWriter implements storage.Factory

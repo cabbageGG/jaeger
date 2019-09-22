@@ -16,6 +16,7 @@
 package spanstore
 
 import (
+	"context"
 	"errors"
 	"database/sql"
 	"fmt"
@@ -25,16 +26,21 @@ import (
 
 	"github.com/jaegertracing/jaeger/model"
 	"github.com/jaegertracing/jaeger/pkg/mysql/config"
+	"github.com/jaegertracing/jaeger/storage/spanstore"
 	"github.com/jaegertracing/jaeger/plugin/storage/mysql/spanstore/dbmodel"
 )
 
 
 const (
-	insertSpan = `
-		INSERT
-		INTO traces(trace_id, span_id, span_hash, parent_id, operation_name, flags,
-				    start_time, duration, tags, logs, refs, process)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	insertSpan = `INSERT INTO traces(trace_id, span_id, span_hash, parent_id, operation_name, flags,
+				    start_time, duration, tags, logs, refs, process, service_name)
+					VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	insertServiceName = `INSERT INTO service_names(service_name) VALUES (?)`
+	insertOperationName = `INSERT INTO operation_names(service_name, operation_name) VALUES (?, ?)`
+	queryTraceByTraceId = `SELECT * FROM traces where trace_id = ?`
+	queryServiceNames = `SELECT service_name FROM service_names`
+	queryOperationsByServiceName = `SELECT operation_name FROM operation_names where service_name = ?`
+	defaultQuery = `SELECT trace_id FROM traces order by start_time limit 20`
 )
 
 var errTraceNotFound = errors.New("trace was not found")
@@ -69,7 +75,7 @@ func WithConfiguration(configuration config.Configuration) *Store {
 // WriteSpan writes the given span
 func (m *Store) WriteSpan(span *model.Span) error {
 	ds := dbmodel.FromDomain(span)
-	res, err := m.mysql_client.Exec(insertSpan,
+	_, err := m.mysql_client.Exec(insertSpan,
 		ds.TraceID,
 		ds.SpanID,
 		ds.SpanHash,
@@ -82,13 +88,136 @@ func (m *Store) WriteSpan(span *model.Span) error {
 		ds.Logs,
 		ds.Refs,   // span 引用关系，是否是子span。有parentSpan
 		ds.Process,
-	)
-	
+		span.Process.ServiceName)
 	if err != nil {
 		fmt.Println("write span err", zap.Error(err))
 	}
-	fmt.Println(res)
+	// write service_name TODO: 这里逻辑不好，应该先查询，没有的话，就新增
+	_, err = m.mysql_client.Exec(insertServiceName, span.Process.ServiceName)
+	if err != nil {
+		fmt.Println("write service_name err", zap.Error(err))
+	}
+
+	// write operation_name
+	_, err = m.mysql_client.Exec(insertOperationName, span.Process.ServiceName, span.OperationName)
+	if err != nil {
+		fmt.Println("write operation_name err", zap.Error(err))
+	}
 
 	return nil
 }
 
+// GetTrace gets a trace
+func (m *Store) GetTrace(ctx context.Context, traceID model.TraceID) (*model.Trace, error){
+	trace := &model.Trace{}
+	trace_id := traceID.String()
+	rows, err := m.mysql_client.Query(queryTraceByTraceId, trace_id)
+	defer rows.Close()
+	if err != nil {
+		fmt.Println("queryTrace err", zap.Error(err))
+		return nil, err
+	}
+	var spans []*model.Span
+	var span *model.Span
+	for rows.Next() {
+		err := rows.Scan(span)
+		if err != nil {
+			fmt.Println("queryTrace scan err", zap.Error(err))
+		}
+		spans = append(spans, span)
+	}
+	trace.Spans = spans
+	return trace, nil
+}
+
+// GetServices returns a list of all known services
+func (m *Store) GetServices(ctx context.Context) ([]string, error){
+	rows, err := m.mysql_client.Query(queryServiceNames)
+	defer rows.Close()
+	if err != nil {
+		fmt.Println("queryService err", zap.Error(err))
+		return nil, err
+	}
+	var service_names []string
+	var service_name string
+	for rows.Next() {
+		err := rows.Scan(&service_name)
+		if err != nil {
+			fmt.Println("queryService scan err", zap.Error(err))
+		}
+		service_names = append(service_names, service_name)
+	}
+	return service_names, nil
+}
+
+// GetOperations returns the operations of a given service
+func (m *Store) GetOperations(ctx context.Context, service string) ([]string, error){
+	rows, err := m.mysql_client.Query(queryOperationsByServiceName, service)
+	defer rows.Close()
+	if err != nil {
+		fmt.Println("queryOperation err", zap.Error(err))
+		return nil, err
+	}
+	var operation_names []string
+	var operation_name string
+	for rows.Next() {
+		err := rows.Scan(&operation_name)
+		if err != nil {
+			fmt.Println("queryService scan err", zap.Error(err))
+		}
+		operation_names = append(operation_names, operation_name)
+	}
+	return operation_names, nil
+}
+
+// FindTraces returns all traces in the query parameters are satisfied by a trace's span
+func (m *Store) FindTraces(ctx context.Context, query *spanstore.TraceQueryParameters) ([]*model.Trace, error){
+	// ServiceName   string
+	// OperationName string
+	// Tags          map[string]string
+	// StartTimeMin  time.Time
+	// StartTimeMax  time.Time
+	// DurationMin   time.Duration
+	// DurationMax   time.Duration
+	// NumTraces     int
+	traceIds,err := m.FindTraceIDs(ctx, query)
+	if err != nil {
+		fmt.Println("queryTraces err", zap.Error(err))
+		return nil, err
+	}
+	var traces []*model.Trace
+	for _, trace_id := range traceIds {
+		trace,err := m.GetTrace(ctx, trace_id)
+		if err != nil {
+			fmt.Println("queryTraces GetTrace err", zap.Error(err))
+		}else {
+			traces = append(traces, trace)
+		}
+	}
+	return traces, nil
+}
+
+// FindTraceIDs is not implemented.
+func (m *Store) FindTraceIDs(ctx context.Context, query *spanstore.TraceQueryParameters) ([]model.TraceID, error){
+	rows, err := m.mysql_client.Query(defaultQuery)
+	defer rows.Close()
+	if err != nil {
+		fmt.Println("queryTraceIDs err", zap.Error(err))
+		return nil, err
+	}
+	var traceIds []model.TraceID
+	var traceIdStr string
+	for rows.Next() {
+		err := rows.Scan(&traceIdStr)
+		if err != nil {
+			fmt.Println("queryTraceIDs scan err", zap.Error(err))
+		}
+		traceId, err := model.TraceIDFromString(traceIdStr)
+		if err != nil {
+			fmt.Println("queryTraceIDs TraceIDFromString err", zap.Error(err))
+		}else {
+			traceIds = append(traceIds, traceId)
+		}
+	}
+	return traceIds, nil
+}

@@ -57,6 +57,6 @@ type Span struct {
 // SpanRef is the UDT representation of a Jaeger Span Reference.
 type SpanRef struct {
 	RefType string  		`json:"ref_type"`
-	TraceID model.TraceID   `json:"trace_id"`
+	TraceID string   		`json:"trace_id"`
 	SpanID  int64   		`json:"sapn_id"`
 }

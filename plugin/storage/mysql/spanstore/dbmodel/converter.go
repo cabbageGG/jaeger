@@ -52,7 +52,6 @@ func FromDomain(span *model.Span) *Span {
 type converter struct{}
 
 func (c converter) fromDomain(span *model.Span) *Span {
-	trace_id  := c.toDBTraceid(span.TraceID)
 	tags := c.toDBTags(span.Tags)
 	logs := c.toDBLogs(span.Logs)
 	refs, parent_id := c.toDBRefs(span.References)
@@ -60,7 +59,7 @@ func (c converter) fromDomain(span *model.Span) *Span {
 	spanHash, _ := model.HashCode(span)
 
 	return &Span{
-		TraceID:       trace_id,
+		TraceID:       span.SpanID.String(),
 		SpanID:        int64(span.SpanID),
 		ParentID:      parent_id,
 		OperationName: span.OperationName,
@@ -85,10 +84,6 @@ func jsonMarshal(v interface{}) string {
 	return string(data)
 }
 
-func (c converter) toDBTraceid(TraceID model.TraceID) string {
-	return jsonMarshal(TraceID)
-}
-
 func (c converter) toDBTags(tags []model.KeyValue) string {
 	return jsonMarshal(tags)
 }
@@ -102,7 +97,7 @@ func (c converter) toDBRefs(refs []model.SpanRef) (string, int64) {
 	var parent_id int64
 	for i, r := range refs {
 		retMe[i] = SpanRef{
-			TraceID: r.TraceID,
+			TraceID: r.TraceID.String(),
 			SpanID:  int64(r.SpanID),
 			RefType: domainToDBRefMap[r.RefType],
 		}
