@@ -59,7 +59,7 @@ func (c converter) fromDomain(span *model.Span) *Span {
 	spanHash, _ := model.HashCode(span)
 
 	return &Span{
-		TraceID:       span.SpanID.String(),
+		TraceID:       span.TraceID.String(),
 		SpanID:        int64(span.SpanID),
 		ParentID:      parent_id,
 		OperationName: span.OperationName,
@@ -106,6 +106,18 @@ func (c converter) toDBRefs(refs []model.SpanRef) (string, int64) {
 		}
 	}
 	return jsonMarshal(retMe), parent_id
+}
+
+func ToDomainRefs(refs []SpanRef, TraceID model.TraceID) ([]model.SpanRef) {
+	retMe := make([]model.SpanRef, len(refs))
+	for i, r := range refs {
+		retMe[i] = model.SpanRef{
+			TraceID: TraceID,
+			SpanID:  model.NewSpanID(uint64(r.SpanID)),
+			RefType: dbToDomainRefMap[r.RefType],
+		}
+	}
+	return retMe
 }
 
 func (c converter) toDBProcess(process *model.Process) string {

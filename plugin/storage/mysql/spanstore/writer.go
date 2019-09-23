@@ -111,7 +111,7 @@ func (m *Store) WriteSpan(span *model.Span) error {
 
 // GetTrace gets a trace
 func (m *Store) GetTrace(ctx context.Context, traceID model.TraceID) (*model.Trace, error){
-	trace := &model.Trace{}
+	trace := model.Trace{}
 	trace_id := traceID.String()
 	rows, err := m.mysql_client.Query(queryTraceByTraceId, trace_id)
 	if err != nil {
@@ -120,7 +120,7 @@ func (m *Store) GetTrace(ctx context.Context, traceID model.TraceID) (*model.Tra
 	}
 	defer rows.Close()
 	var spans []*model.Span
-	var span *model.Span
+	var span model.Span
 	for rows.Next() {
 		var trace_id,span_id,operation_name,refs,tags,logs,process string
 		var flags,start_time,duration int
@@ -129,7 +129,7 @@ func (m *Store) GetTrace(ctx context.Context, traceID model.TraceID) (*model.Tra
 		if err != nil {
 			fmt.Println("queryTrace scan err", zap.Error(err))
 		}
-		span.TraceID, err = model.TraceIDFromString(trace_id)
+		span.TraceID = traceID
 		SpanId, err= strconv.Atoi(span_id)
 		if err != nil {
 			fmt.Println("queryTrace SpanId err", zap.Error(err))
@@ -137,9 +137,12 @@ func (m *Store) GetTrace(ctx context.Context, traceID model.TraceID) (*model.Tra
 			span.SpanID = model.NewSpanID(uint64(SpanId))
 		}
 		span.OperationName = operation_name
-		err = json.Unmarshal([]byte(refs), &span.References)
+		var refs1 []dbmodel.SpanRef
+		err = json.Unmarshal([]byte(refs), &refs1)
 		if err != nil {
 			fmt.Println("queryTrace refs err", zap.Error(err))
+		}else {
+			span.References = dbmodel.ToDomainRefs(refs1, traceID)
 		}
 		err = json.Unmarshal([]byte(tags), &span.Tags)
 		if err != nil {
@@ -156,10 +159,11 @@ func (m *Store) GetTrace(ctx context.Context, traceID model.TraceID) (*model.Tra
 		span.Flags = model.Flags(uint32(flags))
 		span.StartTime = model.EpochMicrosecondsAsTime(uint64(start_time))
 		span.Duration = model.MicrosecondsAsDuration(uint64(duration))
-		spans = append(spans, span)
+		spans = append(spans, &span)
 	}
 	trace.Spans = spans
-	return trace, nil
+
+	return &trace, nil
 }
 
 // GetServices returns a list of all known services
@@ -226,6 +230,7 @@ func (m *Store) FindTraces(ctx context.Context, query *spanstore.TraceQueryParam
 			traces = append(traces, trace)
 		}
 	}
+
 	return traces, nil
 }
 
