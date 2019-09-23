@@ -20,6 +20,8 @@ import (
 	"errors"
 	"database/sql"
 	"fmt"
+	"strconv"
+	"encoding/json"
 
 	_ "github.com/go-sql-driver/mysql"
 	"go.uber.org/zap"
@@ -37,7 +39,7 @@ const (
 					VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	insertServiceName = `INSERT INTO service_names(service_name) VALUES (?)`
 	insertOperationName = `INSERT INTO operation_names(service_name, operation_name) VALUES (?, ?)`
-	queryTraceByTraceId = `SELECT * FROM traces where trace_id = ?`
+	queryTraceByTraceId = `SELECT trace_id,span_id,operation_name,refs,flags,start_time,duration,tags,logs,process FROM traces where trace_id = ?`
 	queryServiceNames = `SELECT service_name FROM service_names`
 	queryOperationsByServiceName = `SELECT operation_name FROM operation_names where service_name = ?`
 	defaultQuery = `SELECT trace_id FROM traces order by start_time limit 20`
@@ -112,18 +114,48 @@ func (m *Store) GetTrace(ctx context.Context, traceID model.TraceID) (*model.Tra
 	trace := &model.Trace{}
 	trace_id := traceID.String()
 	rows, err := m.mysql_client.Query(queryTraceByTraceId, trace_id)
-	defer rows.Close()
 	if err != nil {
 		fmt.Println("queryTrace err", zap.Error(err))
 		return nil, err
 	}
+	defer rows.Close()
 	var spans []*model.Span
 	var span *model.Span
 	for rows.Next() {
-		err := rows.Scan(span)
+		var trace_id,span_id,operation_name,refs,tags,logs,process string
+		var flags,start_time,duration int
+		var SpanId int
+		err := rows.Scan(&trace_id, &span_id, &operation_name, &refs, &flags, &start_time, &duration, &tags, &logs, &process)
 		if err != nil {
 			fmt.Println("queryTrace scan err", zap.Error(err))
 		}
+		span.TraceID, err = model.TraceIDFromString(trace_id)
+		SpanId, err= strconv.Atoi(span_id)
+		if err != nil {
+			fmt.Println("queryTrace SpanId err", zap.Error(err))
+		}else {
+			span.SpanID = model.NewSpanID(uint64(SpanId))
+		}
+		span.OperationName = operation_name
+		err = json.Unmarshal([]byte(refs), &span.References)
+		if err != nil {
+			fmt.Println("queryTrace refs err", zap.Error(err))
+		}
+		err = json.Unmarshal([]byte(tags), &span.Tags)
+		if err != nil {
+			fmt.Println("queryTrace tags err", zap.Error(err))
+		}
+		err = json.Unmarshal([]byte(logs), &span.Logs)
+		if err != nil {
+			fmt.Println("queryTrace logs err", zap.Error(err))
+		}
+		err = json.Unmarshal([]byte(process), &span.Process)
+		if err != nil {
+			fmt.Println("queryTrace process err", zap.Error(err))
+		}
+		span.Flags = model.Flags(uint32(flags))
+		span.StartTime = model.EpochMicrosecondsAsTime(uint64(start_time))
+		span.Duration = model.MicrosecondsAsDuration(uint64(duration))
 		spans = append(spans, span)
 	}
 	trace.Spans = spans
@@ -133,11 +165,11 @@ func (m *Store) GetTrace(ctx context.Context, traceID model.TraceID) (*model.Tra
 // GetServices returns a list of all known services
 func (m *Store) GetServices(ctx context.Context) ([]string, error){
 	rows, err := m.mysql_client.Query(queryServiceNames)
-	defer rows.Close()
 	if err != nil {
 		fmt.Println("queryService err", zap.Error(err))
 		return nil, err
 	}
+	defer rows.Close()
 	var service_names []string
 	var service_name string
 	for rows.Next() {
@@ -153,11 +185,11 @@ func (m *Store) GetServices(ctx context.Context) ([]string, error){
 // GetOperations returns the operations of a given service
 func (m *Store) GetOperations(ctx context.Context, service string) ([]string, error){
 	rows, err := m.mysql_client.Query(queryOperationsByServiceName, service)
-	defer rows.Close()
 	if err != nil {
 		fmt.Println("queryOperation err", zap.Error(err))
 		return nil, err
 	}
+	defer rows.Close()
 	var operation_names []string
 	var operation_name string
 	for rows.Next() {

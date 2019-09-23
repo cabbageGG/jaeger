@@ -20,7 +20,7 @@ import (
 	_"encoding/binary"
 	_ "encoding/json"
 
-	"github.com/jaegertracing/jaeger/model"
+	_ "github.com/jaegertracing/jaeger/model"
 )
 
 const (
