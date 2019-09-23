@@ -42,7 +42,7 @@ const (
 	queryTraceByTraceId = `SELECT trace_id,span_id,operation_name,refs,flags,start_time,duration,tags,logs,process FROM traces where trace_id = ?`
 	queryServiceNames = `SELECT service_name FROM service_names`
 	queryOperationsByServiceName = `SELECT operation_name FROM operation_names where service_name = ?`
-	defaultQuery = `SELECT trace_id FROM traces order by start_time limit 20`
+	defaultQuery = `SELECT trace_id FROM traces order by start_time limit 1`
 )
 
 var errTraceNotFound = errors.New("trace was not found")
@@ -120,8 +120,8 @@ func (m *Store) GetTrace(ctx context.Context, traceID model.TraceID) (*model.Tra
 	}
 	defer rows.Close()
 	var spans []*model.Span
-	var span model.Span
 	for rows.Next() {
+		var span model.Span
 		var trace_id,span_id,operation_name,refs,tags,logs,process string
 		var flags,start_time,duration int
 		var SpanId int
