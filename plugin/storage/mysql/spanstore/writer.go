@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"strconv"
 	"encoding/json"
+	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 	"go.uber.org/zap"
@@ -42,7 +43,7 @@ const (
 	queryTraceByTraceId = `SELECT trace_id,span_id,operation_name,refs,flags,start_time,duration,tags,logs,process FROM traces where trace_id = ?`
 	queryServiceNames = `SELECT service_name FROM service_names`
 	queryOperationsByServiceName = `SELECT operation_name FROM operation_names where service_name = ?`
-	defaultQuery = `SELECT trace_id FROM traces order by start_time limit 1`
+	//defaultQuery = `SELECT trace_id FROM traces order by start_time limit 1`
 )
 
 var errTraceNotFound = errors.New("trace was not found")
@@ -208,14 +209,6 @@ func (m *Store) GetOperations(ctx context.Context, service string) ([]string, er
 
 // FindTraces returns all traces in the query parameters are satisfied by a trace's span
 func (m *Store) FindTraces(ctx context.Context, query *spanstore.TraceQueryParameters) ([]*model.Trace, error){
-	// ServiceName   string
-	// OperationName string
-	// Tags          map[string]string
-	// StartTimeMin  time.Time
-	// StartTimeMax  time.Time
-	// DurationMin   time.Duration
-	// DurationMax   time.Duration
-	// NumTraces     int
 	traceIds,err := m.FindTraceIDs(ctx, query)
 	if err != nil {
 		fmt.Println("queryTraces err", zap.Error(err))
@@ -236,6 +229,7 @@ func (m *Store) FindTraces(ctx context.Context, query *spanstore.TraceQueryParam
 
 // FindTraceIDs is not implemented.
 func (m *Store) FindTraceIDs(ctx context.Context, query *spanstore.TraceQueryParameters) ([]model.TraceID, error){
+	defaultQuery := gen_query_sql(query)
 	rows, err := m.mysql_client.Query(defaultQuery)
 	defer rows.Close()
 	if err != nil {
@@ -257,4 +251,35 @@ func (m *Store) FindTraceIDs(ctx context.Context, query *spanstore.TraceQueryPar
 		}
 	}
 	return traceIds, nil
+}
+
+func gen_query_sql (query *spanstore.TraceQueryParameters) string {
+	defaultQuery := fmt.Sprintf("SELECT trace_id FROM traces WHERE service_name='%s'", query.ServiceName) 
+	if query.OperationName != ""{
+		defaultQuery = defaultQuery + fmt.Sprintf(" and operation_name='%s'", query.OperationName)
+	}
+	var t time.Time
+	if query.StartTimeMax != t {
+		start_time_max := int64(model.TimeAsEpochMicroseconds(query.StartTimeMax))
+		defaultQuery = defaultQuery + fmt.Sprintf(" and start_time<=%d", start_time_max)
+	}
+	if query.StartTimeMin != t {
+		start_time_min := int64(model.TimeAsEpochMicroseconds(query.StartTimeMin))
+		defaultQuery = defaultQuery + fmt.Sprintf(" and start_time>=%d", start_time_min)
+	}
+	if query.DurationMax > 0 {
+		duration_max := int64(model.DurationAsMicroseconds(query.DurationMax))
+		defaultQuery = defaultQuery + fmt.Sprintf(" and duration<=%d", duration_max)
+	}
+	if query.DurationMin > 0 {
+		duration_min := int64(model.DurationAsMicroseconds(query.DurationMin))
+		defaultQuery = defaultQuery + fmt.Sprintf(" and duration>=%d", duration_min)
+	}
+	limit := query.NumTraces
+	if limit <= 0 {
+		limit = 20
+	}
+	defaultQuery = defaultQuery + fmt.Sprintf(" limit %d", limit)
+	fmt.Println(defaultQuery)
+	return defaultQuery
 }
