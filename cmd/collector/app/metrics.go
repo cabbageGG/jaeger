@@ -67,7 +67,26 @@ type SpanProcessorMetrics struct {
 	SavedErrBySvc metricsBySvc  // spans failed to save
 	serviceNames  metrics.Gauge // total number of unique service name metrics reported by this collector
 	spanCounts    SpanCountsByFormat
+	// Saved duration
+	SaveDurationBySvc durationMetricsBySvc
 }
+
+type histogramsBySvc struct {
+	histograms      map[string]metrics.Histogram // histogram duration per service // where to init ?
+	factory         metrics.Factory
+	lock            *sync.Mutex
+	maxServiceNames int
+	category        string
+}
+
+type spanHistogramsBySvc struct {
+	histogramsBySvc
+}
+
+type durationMetricsBySvc struct {
+	spans spanHistogramsBySvc
+}
+
 
 type countsBySvc struct {
 	counts          map[string]metrics.Counter // counters per service
@@ -155,6 +174,7 @@ func NewSpanProcessorMetrics(serviceMetrics metrics.Factory, hostMetrics metrics
 		SavedErrBySvc:  newMetricsBySvc(serviceMetrics.Namespace(metrics.NSOptions{Name: "", Tags: map[string]string{"result": "err"}}), "saved-by-svc"),
 		spanCounts:     spanCounts,
 		serviceNames:   hostMetrics.Gauge(metrics.Options{Name: "spans.serviceNames", Tags: nil}),
+		SaveDurationBySvc: newDurationMetricsBySvc(serviceMetrics.Namespace(metrics.NSOptions{Name: "", Tags: nil}), "saved-duration-by-svc"),
 	}
 
 	return m
@@ -370,4 +390,61 @@ func (m *traceCountsBySvc) buildKey(serviceName, samplerType string) string {
 	key := keyBuilder.String()
 	m.stringBuilderPool.Put(keyBuilder)
 	return key
+}
+
+func newDurationMetricsBySvc(factory metrics.Factory, category string) durationMetricsBySvc {
+	spansFactory := factory.Namespace(metrics.NSOptions{Name: "span_duration", Tags: nil})
+	return durationMetricsBySvc{
+		spans:  newSpanHistogramsBySvc(spansFactory, category, maxServiceNames),
+	}
+}
+
+func newSpanHistogramsBySvc(factory metrics.Factory, category string, maxServiceNames int) spanHistogramsBySvc {
+	return spanHistogramsBySvc{
+		histogramsBySvc: histogramsBySvc{
+			histograms:      map[string]metrics.Histogram{otherServices: factory.Histogram(metrics.HistogramOptions{Name: category, Tags: map[string]string{"svc": otherServices, "debug": "true"}})},
+			factory:         factory,
+			lock:            &sync.Mutex{},
+			maxServiceNames: maxServiceNames,
+			category:        category,
+		},
+	}
+}
+
+// reportServiceNameForSpan determines the name of the service that emitted
+// the span and reports a histogram stat.
+func (m durationMetricsBySvc) ReportServiceNameForSpan(span *model.Span) {
+	var serviceName string
+	if nil == span.Process || len(span.Process.ServiceName) == 0 {
+		serviceName = "__unknown"
+	} else {
+		serviceName = span.Process.ServiceName
+	}
+
+	m.histogramSpanDurationByServiceName(serviceName, span.Duration.Seconds())
+}
+
+// histogramSpanDurationByServiceName histogram duration per service.
+func (m durationMetricsBySvc) histogramSpanDurationByServiceName(serviceName string, duration float64) {
+	m.spans.histogramByServiceName(serviceName, duration)
+}
+
+func (m *spanHistogramsBySvc) histogramByServiceName(serviceName string, duration float64) {
+	serviceName = NormalizeServiceName(serviceName)
+	histograms := m.histograms
+	var histogram metrics.Histogram
+	m.lock.Lock()
+	if h, ok := histograms[serviceName]; ok {
+		histogram = h
+	} else if len(histograms) < m.maxServiceNames {
+		tags := map[string]string{"svc": serviceName}
+		buckets := []float64{0.5, 1.0, 5.0, 10.0}
+		h := m.factory.Histogram(metrics.HistogramOptions{Name: serviceName, Tags: tags, Buckets: buckets}) // todo init
+		histograms[serviceName] = h
+		histogram = h
+	} else {
+		histogram = histograms[otherServices]
+	}
+	m.lock.Unlock()
+	histogram.Record(duration)
 }

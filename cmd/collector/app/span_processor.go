@@ -129,6 +129,7 @@ func (sp *spanProcessor) saveSpan(span *model.Span) {
 			zap.Any("Logs", span.Logs), zap.Any("Process", span.Process),
 			zap.Any("ProcessID", span.ProcessID), zap.Any("Warnings", span.Warnings))
 		sp.metrics.SavedOkBySvc.ReportServiceNameForSpan(span)
+		sp.metrics.SaveDurationBySvc.ReportServiceNameForSpan(span)
 	}
 	sp.metrics.SaveLatency.Record(time.Since(startTime))
 }
