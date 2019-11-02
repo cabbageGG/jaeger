@@ -73,7 +73,9 @@ type SpanProcessorMetrics struct {
 
 type histogramsBySvc struct {
 	histograms      map[string]metrics.Histogram // histogram duration per service // where to init ?
-	factory         metrics.Factory
+	errCounts       map[string]metrics.Counter // err counters per service 
+	dFactory        metrics.Factory
+	eFactory		metrics.Factory
 	lock            *sync.Mutex
 	maxServiceNames int
 	category        string
@@ -174,7 +176,7 @@ func NewSpanProcessorMetrics(serviceMetrics metrics.Factory, hostMetrics metrics
 		SavedErrBySvc:  newMetricsBySvc(serviceMetrics.Namespace(metrics.NSOptions{Name: "", Tags: map[string]string{"result": "err"}}), "saved-by-svc"),
 		spanCounts:     spanCounts,
 		serviceNames:   hostMetrics.Gauge(metrics.Options{Name: "spans.serviceNames", Tags: nil}),
-		SaveDurationBySvc: newDurationMetricsBySvc(serviceMetrics.Namespace(metrics.NSOptions{Name: "", Tags: nil}), "saved-duration-by-svc"),
+		SaveDurationBySvc: newDurationMetricsBySvc(serviceMetrics.Namespace(metrics.NSOptions{Name: "", Tags: nil}), "saved-by-svc"),
 	}
 
 	return m
@@ -393,17 +395,21 @@ func (m *traceCountsBySvc) buildKey(serviceName, samplerType string) string {
 }
 
 func newDurationMetricsBySvc(factory metrics.Factory, category string) durationMetricsBySvc {
-	spansFactory := factory.Namespace(metrics.NSOptions{Name: "span_duration", Tags: nil})
+	durationFactory := factory.Namespace(metrics.NSOptions{Name: "span_duration", Tags: nil})
+	errFactory := factory.Namespace(metrics.NSOptions{Name: "span_err", Tags: nil})
 	return durationMetricsBySvc{
-		spans:  newSpanHistogramsBySvc(spansFactory, category, maxServiceNames),
+		spans:  newSpanHistogramsBySvc(durationFactory, errFactory, category, maxServiceNames),
 	}
 }
 
-func newSpanHistogramsBySvc(factory metrics.Factory, category string, maxServiceNames int) spanHistogramsBySvc {
+func newSpanHistogramsBySvc(dFactory metrics.Factory, eFactory metrics.Factory, category string, maxServiceNames int) spanHistogramsBySvc {
+	buckets := []float64{0.5, 1.0, 5.0, 10.0}  // TODO config by cli
 	return spanHistogramsBySvc{
 		histogramsBySvc: histogramsBySvc{
-			histograms:      map[string]metrics.Histogram{otherServices: factory.Histogram(metrics.HistogramOptions{Name: category, Tags: map[string]string{"svc": otherServices, "debug": "true"}})},
-			factory:         factory,
+			histograms:      map[string]metrics.Histogram{otherServices: dFactory.Histogram(metrics.HistogramOptions{Name: category, Tags: map[string]string{"svc": otherServices}, Buckets: buckets})},
+			errCounts:       map[string]metrics.Counter{otherServices: eFactory.Counter(metrics.Options{Name: category, Tags: map[string]string{"svc": otherServices}})},
+			dFactory:         dFactory,
+			eFactory:         eFactory,
 			lock:            &sync.Mutex{},
 			maxServiceNames: maxServiceNames,
 			category:        category,
@@ -421,12 +427,49 @@ func (m durationMetricsBySvc) ReportServiceNameForSpan(span *model.Span) {
 		serviceName = span.Process.ServiceName
 	}
 
+	var is_err bool
+	for _, tag := range span.Tags {
+		if tag.Key == "error" {
+			is_err = tag.VBool
+			break
+		}
+	}
+
+	if is_err {
+		m.countErrByServiceName(serviceName)
+	}
+
 	m.histogramSpanDurationByServiceName(serviceName, span.Duration.Seconds())
+}
+
+// histogramSpanDurationByServiceName histogram duration per service.
+func (m durationMetricsBySvc) countErrByServiceName(serviceName string) {
+	m.spans.countSpanErrByServiceName(serviceName)
 }
 
 // histogramSpanDurationByServiceName histogram duration per service.
 func (m durationMetricsBySvc) histogramSpanDurationByServiceName(serviceName string, duration float64) {
 	m.spans.histogramByServiceName(serviceName, duration)
+}
+
+func (m *spanHistogramsBySvc) countSpanErrByServiceName(serviceName string) {
+	serviceName = NormalizeServiceName(serviceName)
+	counts := m.errCounts
+	var counter metrics.Counter
+	m.lock.Lock()
+
+	if c, ok := counts[serviceName]; ok {
+		counter = c
+	} else if len(counts) < m.maxServiceNames {
+		tags := map[string]string{"svc": serviceName}
+		c := m.eFactory.Counter(metrics.Options{Name: m.category, Tags: tags})
+		counts[serviceName] = c
+		counter = c
+	} else {
+		counter = counts[otherServices]
+	}
+	m.lock.Unlock()
+	counter.Inc(1)
 }
 
 func (m *spanHistogramsBySvc) histogramByServiceName(serviceName string, duration float64) {
@@ -438,8 +481,7 @@ func (m *spanHistogramsBySvc) histogramByServiceName(serviceName string, duratio
 		histogram = h
 	} else if len(histograms) < m.maxServiceNames {
 		tags := map[string]string{"svc": serviceName}
-		buckets := []float64{0.5, 1.0, 5.0, 10.0}
-		h := m.factory.Histogram(metrics.HistogramOptions{Name: serviceName, Tags: tags, Buckets: buckets}) // todo init
+		h := m.dFactory.Histogram(metrics.HistogramOptions{Name: m.category, Tags: tags}) // todo init
 		histograms[serviceName] = h
 		histogram = h
 	} else {
