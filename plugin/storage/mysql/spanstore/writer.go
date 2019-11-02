@@ -23,9 +23,11 @@ import (
 	"strconv"
 	"encoding/json"
 	"time"
+	"sync"
 
 	_ "github.com/go-sql-driver/mysql"
 	"go.uber.org/zap"
+	"github.com/smartwalle/dbs"
 
 	"github.com/jaegertracing/jaeger/model"
 	"github.com/jaegertracing/jaeger/pkg/mysql/config"
@@ -38,8 +40,8 @@ const (
 	insertSpan = `INSERT INTO traces(trace_id, span_id, span_hash, parent_id, operation_name, flags,
 				    start_time, duration, tags, logs, refs, process, service_name)
 					VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-	insertServiceName = `INSERT INTO service_names(service_name) VALUES (?)`
-	insertOperationName = `INSERT INTO operation_names(service_name, operation_name) VALUES (?, ?)`
+	insertServiceName = `INSERT ignore INTO service_names(service_name) VALUES (?)`
+	insertOperationName = `INSERT ignore  INTO operation_names(service_name, operation_name) VALUES (?, ?)`
 	queryTraceByTraceId = `SELECT trace_id,span_id,operation_name,refs,flags,start_time,duration,tags,logs,process FROM traces where trace_id = ?`
 	queryServiceNames = `SELECT service_name FROM service_names`
 	queryOperationsByServiceName = `SELECT operation_name FROM operation_names where service_name = ?`
@@ -52,6 +54,9 @@ var errTraceNotFound = errors.New("trace was not found")
 type Store struct {
 	mysql_client  *sql.DB
 	config        config.Configuration
+	eventQueue    chan *dbmodel.Span
+	caches        map[string]map[string]struct{}
+	cacheLock     sync.Mutex
 }
 
 // // NewStore creates a localhost store
@@ -72,42 +77,150 @@ func WithConfiguration(configuration config.Configuration) *Store {
 		fmt.Println("Cannot create mysql session", zap.Error(err))
 		return nil
 	}
-	return &Store{mysql_client: db, config: configuration}
+	return &Store{mysql_client: db, config: configuration, eventQueue: make(chan *dbmodel.Span, 10000), caches: map[string]map[string]struct{}{}}
+}
+
+func (m *Store)Initialize(){
+	m.load_caches()
+	m.start_storage_backgroud()
+}
+
+func (m *Store)load_caches(){
+	m.cacheLock.Lock()
+	defer m.cacheLock.Unlock()
+	service_names, err := m.getServices()
+	if err != nil {
+		fmt.Println("getServices error", zap.Error(err))
+		return 
+	}
+	for _, service_name := range service_names {
+		m.caches[service_name] = map[string]struct{}{}
+		operation_names, err := m.getOperations(service_name)
+		if err != nil {
+			fmt.Println("get service operation error", zap.Error(err))
+			continue 
+		}
+		for _, operation_name := range operation_names{
+			m.caches[service_name][operation_name] = struct{}{}
+		}
+	}
+	fmt.Printf("load caches success: %+v \n", m.caches)
+}
+
+func (m *Store)start_storage_backgroud(){
+	var (
+		eventQueue     = m.eventQueue
+		batchSize      = 50 //m.batchSize
+		workers        = 8 //m.workers
+		lingerTime     = 200 * time.Millisecond //m.lingerTime
+		batchProcessor = func(batch []*dbmodel.Span) error {
+			if len(batch) > 0{
+				fmt.Printf("process %d items \n", len(batch))
+				m.batch_insert(batch)
+			}else{
+				fmt.Println("batch is 0")
+			}
+			return nil
+		}
+		errHandler = func(err error, batch []*dbmodel.Span) {
+			fmt.Println("some error happens")
+		}
+	)
+
+	for i := 0; i < workers; i++ {
+		go func() {
+			var batch []*dbmodel.Span
+			lingerTimer := time.NewTimer(0)
+			if !lingerTimer.Stop() {
+				<-lingerTimer.C
+			}
+			defer lingerTimer.Stop()
+
+			for {
+				select {
+				case msg := <-eventQueue:
+					batch = append(batch, msg)
+					if len(batch) != batchSize {
+						if len(batch) == 1 {
+							lingerTimer.Reset(lingerTime)
+						}
+						break
+					}
+
+					fmt.Println("batch is reach")
+					if err := batchProcessor(batch); err != nil {
+						errHandler(err, batch)
+					}
+
+					if !lingerTimer.Stop() {
+						<-lingerTimer.C
+					}
+
+					batch = make([]*dbmodel.Span, 0)
+				case <-lingerTimer.C:
+					fmt.Println("time is reach")
+					if err := batchProcessor(batch); err != nil {
+						errHandler(err, batch)
+					}
+
+					batch = make([]*dbmodel.Span, 0)
+				}
+			}
+		}()
+		fmt.Printf("start storage worker %d success \n", i)
+	}
+}
+
+func (m *Store)batch_insert(spans []*dbmodel.Span) {
+    var ib = dbs.NewInsertBuilder()
+    ib.Table("traces")
+    ib.Columns("trace_id", "span_id", "span_hash", "parent_id", "operation_name", "flags",
+		"start_time", "duration", "tags", "logs", "refs", "process", "service_name")
+    for _, span := range spans {
+		ib.Values(span.TraceID, span.SpanID,span.SpanHash, span.ParentID, span.OperationName, span.Flags, span.StartTime,
+			span.Duration, span.Tags, span.Logs, span.Refs, span.Process, span.ServiceName)
+    }
+    ib.Exec(m.mysql_client)
 }
 
 // WriteSpan writes the given span
 func (m *Store) WriteSpan(span *model.Span) error {
 	ds := dbmodel.FromDomain(span)
-	_, err := m.mysql_client.Exec(insertSpan,
-		ds.TraceID,
-		ds.SpanID,
-		ds.SpanHash,
-		ds.ParentID,
-		ds.OperationName,
-		ds.Flags,
-		ds.StartTime,
-		ds.Duration,
-		ds.Tags,
-		ds.Logs,
-		ds.Refs,   // span 引用关系，是否是子span。有parentSpan
-		ds.Process,
-		span.Process.ServiceName)
-	if err != nil {
-		fmt.Println("write span err", zap.Error(err))
-	}
-	// write service_name TODO: 这里逻辑不好，应该先查询，没有的话，就新增
-	_, err = m.mysql_client.Exec(insertServiceName, span.Process.ServiceName)
-	if err != nil {
-		fmt.Println("write service_name err", zap.Error(err))
+	select {
+	case m.eventQueue <- ds:
+		fmt.Println("sent one span")
+	default:
+		fmt.Println("no span sent")
 	}
 
-	// write operation_name
-	_, err = m.mysql_client.Exec(insertOperationName, span.Process.ServiceName, span.OperationName)
-	if err != nil {
-		fmt.Println("write operation_name err", zap.Error(err))
-	}
+	// use cache to save the less data, note to load the data to cache when start init 
+	m.UpdateCaches(ds.ServiceName, ds.OperationName)
 
 	return nil
+}
+
+func (m *Store) UpdateCaches(service string, operation string){
+	m.cacheLock.Lock()
+	defer m.cacheLock.Unlock()
+	service_operations, ok := m.caches[service]
+	if !ok {
+		m.caches[service] = map[string]struct{}{}
+		m.caches[service][operation] = struct{}{}
+		// insert service operation to mysql
+		_, err := m.mysql_client.Exec(insertServiceName, service)
+		if err != nil {
+			fmt.Println("write service_name err", zap.Error(err))
+		}
+	}else{
+		if _, ok := service_operations[operation]; !ok{
+			m.caches[service][operation] = struct{}{}
+			// insert operation to mysql
+			_, err := m.mysql_client.Exec(insertOperationName, service, operation)
+			if err != nil {
+				fmt.Println("write operation_name err", zap.Error(err))
+			}
+		}
+	}
 }
 
 // GetTrace gets a trace
@@ -169,6 +282,10 @@ func (m *Store) GetTrace(ctx context.Context, traceID model.TraceID) (*model.Tra
 
 // GetServices returns a list of all known services
 func (m *Store) GetServices(ctx context.Context) ([]string, error){
+	return m.getServices()
+}
+ 
+func (m *Store) getServices()([]string, error){
 	rows, err := m.mysql_client.Query(queryServiceNames)
 	if err != nil {
 		fmt.Println("queryService err", zap.Error(err))
@@ -189,6 +306,10 @@ func (m *Store) GetServices(ctx context.Context) ([]string, error){
 
 // GetOperations returns the operations of a given service
 func (m *Store) GetOperations(ctx context.Context, service string) ([]string, error){
+	return m.getOperations(service)
+}
+
+func (m *Store) getOperations(service string) ([]string, error){
 	rows, err := m.mysql_client.Query(queryOperationsByServiceName, service)
 	if err != nil {
 		fmt.Println("queryOperation err", zap.Error(err))

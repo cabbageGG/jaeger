@@ -54,6 +54,7 @@ func (f *Factory) InitFromViper(v *viper.Viper) {
 func (f *Factory) Initialize(metricsFactory metrics.Factory, logger *zap.Logger) error {
 	f.metricsFactory, f.logger = metricsFactory, logger
 	f.store = mSpanStore.WithConfiguration(f.options.Configuration) // 建立一个mysql连接对象
+	f.store.Initialize()
 	logger.Info("Mysql storage initialized successed")
 	return nil
 }
