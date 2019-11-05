@@ -207,7 +207,7 @@ func (r *SpanReader) FindTraces(ctx context.Context, query *spanstore.TraceQuery
 	return traces, nil
 }
 
-// FindTraceIDs is not implemented.
+// FindTraceIDs 
 func (r *SpanReader) FindTraceIDs(ctx context.Context, query *spanstore.TraceQueryParameters) ([]model.TraceID, error){
 	defaultQuery := gen_query_sql(query)
 	rows, err := r.mysql_client.Query(defaultQuery)

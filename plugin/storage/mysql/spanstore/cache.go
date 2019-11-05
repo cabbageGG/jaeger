@@ -31,7 +31,7 @@ const (
 	insertServiceName = `INSERT ignore INTO service_names(service_name) VALUES (?)`
 	insertOperationName = `INSERT ignore  INTO operation_names(service_name, operation_name) VALUES (?, ?)`
 	queryTraceByTraceId = `SELECT trace_id,span_id,operation_name,refs,flags,start_time,duration,tags,logs,process FROM traces where trace_id = ?`
-	queryTraceByTraceIds = "SELECT trace_id,span_id,operation_name,refs,flags,start_time,duration,tags,logs,process FROM traces where trace_id in (?)"
+	queryTraceByTraceIds = "SELECT trace_id,span_id,operation_name,refs,flags,start_time,duration,tags,logs,process FROM traces where trace_id in "
 	queryServiceNames = `SELECT service_name FROM service_names`
 	queryOperationsByServiceName = `SELECT operation_name FROM operation_names where service_name = ?`
 )
