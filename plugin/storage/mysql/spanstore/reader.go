@@ -122,21 +122,88 @@ func (r *SpanReader) GetOperations(ctx context.Context, service string) ([]strin
 
 // FindTraces returns all traces in the query parameters are satisfied by a trace's span
 func (r *SpanReader) FindTraces(ctx context.Context, query *spanstore.TraceQueryParameters) ([]*model.Trace, error){
-	traceIds,err := r.FindTraceIDs(ctx, query)
+	traceIds,err := r.FindTraceIDs(ctx, query) // must need FindTraceIDs because of the limit params
 	if err != nil {
-		r.logger.Fatal("queryTraces err", zap.Error(err))
+		r.logger.Fatal("FindTraceIDs err", zap.Error(err))
 		return nil, err
 	}
-	var traces []*model.Trace
-	for _, trace_id := range traceIds {
-		trace,err := r.GetTrace(ctx, trace_id)
-		if err != nil {
-			r.logger.Fatal("queryTraces GetTrace err", zap.Error(err))
-		}else {
-			traces = append(traces, trace)
+	var traceIdsStr string = ""
+	for _,trace_id := range traceIds {
+		if traceIdsStr != "" {
+			traceIdsStr = traceIdsStr + ","
 		}
+		traceIdsStr = traceIdsStr + "'" + trace_id.String() + "'"
+	}
+	traces_map := make(map[string][]*model.Span)
+	SQL := queryTraceByTraceIds + "(" + traceIdsStr + ")"
+	r.logger.Info("FindTraces query sql", zap.String("SQL", SQL))
+	rows, err := r.mysql_client.Query(SQL)
+	defer rows.Close()
+	if err != nil {
+		r.logger.Fatal("FindTraces err", zap.Error(err))
+		return nil, err
 	}
 
+	for rows.Next() {
+		var span model.Span
+		var trace_id,span_id,operation_name,refs,tags,logs,process string
+		var flags,start_time,duration int
+		var SpanId int
+		err := rows.Scan(&trace_id, &span_id, &operation_name, &refs, &flags, &start_time, &duration, &tags, &logs, &process)
+		if err != nil {
+			r.logger.Fatal("FindTraces scan err", zap.Error(err))
+		}
+		spans, ok := traces_map[trace_id]
+		if !ok {
+			spans = []*model.Span{}
+		}
+		r.logger.Info("trace info", zap.String("trace_id", trace_id), zap.String("span_id", span_id))
+		traceID, err := model.TraceIDFromString(trace_id)
+		if err != nil {
+			r.logger.Fatal("FindTraces TraceIDFromString err", zap.Error(err))
+		}else {
+			span.TraceID = traceID
+		}
+
+		SpanId, err= strconv.Atoi(span_id)
+		if err != nil {
+			r.logger.Fatal("FindTraces SpanId err", zap.Error(err))
+		}else {
+			span.SpanID = model.NewSpanID(uint64(SpanId))
+		}
+		span.OperationName = operation_name
+		var refs1 []dbmodel.SpanRef
+		err = json.Unmarshal([]byte(refs), &refs1)
+		if err != nil {
+			r.logger.Fatal("FindTraces refs err", zap.Error(err))
+		}else {
+			span.References = dbmodel.ToDomainRefs(refs1, traceID)
+		}
+		err = json.Unmarshal([]byte(tags), &span.Tags)
+		if err != nil {
+			r.logger.Fatal("FindTraces tags err", zap.Error(err))
+		}
+		err = json.Unmarshal([]byte(logs), &span.Logs)
+		if err != nil {
+			r.logger.Fatal("FindTraces logs err", zap.Error(err))
+		}
+		err = json.Unmarshal([]byte(process), &span.Process)
+		if err != nil {
+			r.logger.Fatal("FindTraces process err", zap.Error(err))
+		}
+		span.Flags = model.Flags(uint32(flags))
+		span.StartTime = model.EpochMicrosecondsAsTime(uint64(start_time))
+		span.Duration = model.MicrosecondsAsDuration(uint64(duration))
+		spans = append(spans, &span)
+		traces_map[trace_id] = spans
+	}
+	r.logger.Info("traces info", zap.Any("traces_map", traces_map))
+	var traces []*model.Trace 
+	for _, spans := range traces_map {
+		trace := model.Trace{}
+		trace.Spans = spans
+		traces = append(traces, &trace)
+	}
 	return traces, nil
 }
 
@@ -167,7 +234,7 @@ func (r *SpanReader) FindTraceIDs(ctx context.Context, query *spanstore.TraceQue
 }
 
 func gen_query_sql(query *spanstore.TraceQueryParameters) string {
-	defaultQuery := fmt.Sprintf("SELECT trace_id FROM traces WHERE service_name='%s'", query.ServiceName) 
+	defaultQuery := fmt.Sprintf("SELECT distinct(trace_id) FROM traces WHERE service_name='%s'", query.ServiceName) 
 	if query.OperationName != ""{
 		defaultQuery = defaultQuery + fmt.Sprintf(" and operation_name='%s'", query.OperationName)
 	}
