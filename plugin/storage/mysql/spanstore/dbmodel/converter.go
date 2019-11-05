@@ -47,9 +47,95 @@ func FromDomain(span *model.Span) *Span {
 	return converter{}.fromDomain(span)
 }
 
+// ToDomain converts a database Span to a domain model.Span
+func ToDomain(dbSpan *Span) (*model.Span, error) {
+	return converter{}.toDomain(dbSpan)
+}
+
 // converter converts Spans between domain and database representations.
 // It primarily exists to namespace the conversion functions.
 type converter struct{}
+
+func (c converter) toDomain(dbSpan *Span) (*model.Span, error) {
+	traceID, err := model.TraceIDFromString(dbSpan.TraceID)
+	if err != nil {
+		return nil, err
+	}
+	refs, err := c.fromDBRefs(dbSpan.Refs, traceID)
+	if err != nil {
+		return nil, err
+	}
+	tags, err := c.fromDBTags(dbSpan.Tags)
+	if err != nil {
+		return nil, err
+	}
+	logs, err := c.fromDBLogs(dbSpan.Logs)
+	if err != nil {
+		return nil, err
+	}
+	process, err := c.fromDBProcess(dbSpan.Process)
+	if err != nil {
+		return nil, err
+	}
+
+	span := &model.Span{
+		TraceID:       traceID,
+		SpanID:        model.NewSpanID(uint64(dbSpan.SpanID)),
+		OperationName: dbSpan.OperationName,
+		References:    model.MaybeAddParentSpanID(traceID, model.NewSpanID(uint64(dbSpan.ParentID)), refs),
+		Flags:         model.Flags(uint32(dbSpan.Flags)),
+		StartTime:     model.EpochMicrosecondsAsTime(uint64(dbSpan.StartTime)),
+		Duration:      model.MicrosecondsAsDuration(uint64(dbSpan.Duration)),
+		Tags:          tags,
+		Logs:          logs,
+		Process:       process,
+	}
+	return span, nil
+}
+
+func (c converter) fromDBRefs(dbrefs string, traceID model.TraceID) ([]model.SpanRef, error) {
+	var refs []SpanRef
+	err := json.Unmarshal([]byte(dbrefs), &refs)
+	if err != nil {
+		return nil, err
+	}
+	retMe := make([]model.SpanRef, len(refs))
+	for i, r := range refs {
+		retMe[i] = model.SpanRef{
+			TraceID: traceID,
+			SpanID:  model.NewSpanID(uint64(r.SpanID)),
+			RefType: dbToDomainRefMap[r.RefType],
+		}
+	}
+	return retMe, nil
+}
+
+func (c converter) fromDBTags(tags string) ([]model.KeyValue, error) {
+	retMe := []model.KeyValue{}
+	err := json.Unmarshal([]byte(tags), &retMe)
+	if err != nil {
+		return nil, err
+	}
+	return retMe, nil
+}
+
+func (c converter) fromDBLogs(logs string) ([]model.Log, error) {
+	retMe := []model.Log{}
+	err := json.Unmarshal([]byte(logs), &retMe)
+	if err != nil {
+		return nil, err
+	}
+	return retMe, nil
+}
+
+func (c converter) fromDBProcess(process string) (*model.Process, error) {
+	retMe := model.Process{}
+	err := json.Unmarshal([]byte(process), &retMe)
+	if err != nil {
+		return nil, err
+	}
+	return &retMe, nil
+}
 
 func (c converter) fromDomain(span *model.Span) *Span {
 	tags := c.toDBTags(span.Tags)
@@ -61,6 +147,7 @@ func (c converter) fromDomain(span *model.Span) *Span {
 	return &Span{
 		TraceID:       span.TraceID.String(),
 		SpanID:        int64(span.SpanID),
+		SpanHash:      int64(spanHash),
 		ParentID:      parent_id,
 		OperationName: span.OperationName,
 		Flags:         int32(span.Flags),
@@ -71,7 +158,6 @@ func (c converter) fromDomain(span *model.Span) *Span {
 		Refs:          refs,
 		Process:       udtProcess,
 		ServiceName:   span.Process.ServiceName,
-		SpanHash:      int64(spanHash),
 	}
 }
 
@@ -106,18 +192,6 @@ func (c converter) toDBRefs(refs []model.SpanRef) (string, int64) {
 		}
 	}
 	return jsonMarshal(retMe), parent_id
-}
-
-func ToDomainRefs(refs []SpanRef, TraceID model.TraceID) ([]model.SpanRef) {
-	retMe := make([]model.SpanRef, len(refs))
-	for i, r := range refs {
-		retMe[i] = model.SpanRef{
-			TraceID: TraceID,
-			SpanID:  model.NewSpanID(uint64(r.SpanID)),
-			RefType: dbToDomainRefMap[r.RefType],
-		}
-	}
-	return retMe
 }
 
 func (c converter) toDBProcess(process *model.Process) string {

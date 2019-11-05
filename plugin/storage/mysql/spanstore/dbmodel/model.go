@@ -39,19 +39,19 @@ const (
 
 // Span is the database representation of a span.
 type Span struct {
-	TraceID       string
-	SpanID        int64
-	ParentID      int64 // deprecated
-	OperationName string
-	Flags         int32
-	StartTime     int64
-	Duration      int64
-	Tags          string
-	Logs          string
-	Refs          string
-	Process       string
-	ServiceName   string
-	SpanHash      int64
+	TraceID       string  `db:"trace_id"`
+	SpanID        int64   `db:"span_id"`
+	SpanHash      int64   `db:"span_hash"`
+	ParentID      int64   `db:"parent_id"`
+	OperationName string  `db:"operation_name"`
+	Flags         int32   `db:"flags"`
+	StartTime     int64   `db:"start_time"`
+	Duration      int64   `db:"duration"`
+	Tags          string  `db:"tags"`
+	Logs          string  `db:"logs"`
+	Refs          string  `db:"refs"`
+	Process       string  `db:"process"`
+	ServiceName   string  `db:"service_name"`
 }
 
 // SpanRef is the UDT representation of a Jaeger Span Reference.
