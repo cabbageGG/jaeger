@@ -17,14 +17,17 @@ package mysql
 
 import (
 	"flag"
+	"database/sql"
 
 	"github.com/spf13/viper"
 	"github.com/uber/jaeger-lib/metrics"
 	"go.uber.org/zap"
+	_ "github.com/go-sql-driver/mysql"
 
 	"github.com/jaegertracing/jaeger/storage/spanstore"
 	"github.com/jaegertracing/jaeger/storage/dependencystore"
 	mSpanStore "github.com/jaegertracing/jaeger/plugin/storage/mysql/spanstore"
+	"github.com/jaegertracing/jaeger/plugin/storage/mysql/spanstore/dbmodel"
 )
 
 // Factory implements storage.Factory and creates storage components backed by mysql store.
@@ -32,7 +35,10 @@ type Factory struct {
 	options        Options
 	metricsFactory metrics.Factory
 	logger         *zap.Logger
-	store          *mSpanStore.Store
+	store          *sql.DB
+	cacheStore     *mSpanStore.CacheStore
+	backgroudStore *mSpanStore.BackgroudStore
+	eventQueue     chan *dbmodel.Span
 }
 
 // NewFactory creates a new Factory.
@@ -53,20 +59,33 @@ func (f *Factory) InitFromViper(v *viper.Viper) {
 // Initialize implements storage.Factory
 func (f *Factory) Initialize(metricsFactory metrics.Factory, logger *zap.Logger) error {
 	f.metricsFactory, f.logger = metricsFactory, logger
-	f.store = mSpanStore.WithConfiguration(f.options.Configuration) // 建立一个mysql连接对象
-	f.store.Initialize()
+
+	db, err := sql.Open("mysql", f.options.Configuration.Url) // 建立一个mysql连接对象
+	if err != nil {
+		logger.Fatal("Cannot create mysql session", zap.Error(err))
+		return err
+	}
+	f.store = db 
+
+	f.cacheStore = mSpanStore.NewCacheStore(f.store, f.logger)
+	f.cacheStore.Initialize()
+
+	f.eventQueue = make(chan *dbmodel.Span, 100000) // TODO config
+	f.backgroudStore = mSpanStore.NewBackgroudStore(f.store, f.eventQueue, f.logger)
+	f.backgroudStore.Start()
+
 	logger.Info("Mysql storage initialized successed")
 	return nil
 }
 
 // CreateSpanReader implements storage.Factory
 func (f *Factory) CreateSpanReader() (spanstore.Reader, error) {
-	return f.store, nil
+	return mSpanStore.NewSpanReader(f.store, f.cacheStore, f.logger), nil
 }
 
 // CreateSpanWriter implements storage.Factory
 func (f *Factory) CreateSpanWriter() (spanstore.Writer, error) {
-	return f.store, nil
+	return mSpanStore.NewSpanWriter(f.eventQueue, f.cacheStore, f.logger), nil
 }
 
 // CreateDependencyReader implements storage.Factory
