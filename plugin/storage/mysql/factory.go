@@ -27,6 +27,7 @@ import (
 	"github.com/jaegertracing/jaeger/storage/spanstore"
 	"github.com/jaegertracing/jaeger/storage/dependencystore"
 	mSpanStore "github.com/jaegertracing/jaeger/plugin/storage/mysql/spanstore"
+	depStore "github.com/jaegertracing/jaeger/plugin/storage/mysql/dependencystore"
 	"github.com/jaegertracing/jaeger/plugin/storage/mysql/spanstore/dbmodel"
 )
 
@@ -90,5 +91,6 @@ func (f *Factory) CreateSpanWriter() (spanstore.Writer, error) {
 
 // CreateDependencyReader implements storage.Factory
 func (f *Factory) CreateDependencyReader() (dependencystore.Reader, error) {
-	return nil, nil
+	sr, _ := f.CreateSpanReader() // err is always nil
+	return depStore.NewDependencyStore(sr), nil
 }
