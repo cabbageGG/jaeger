@@ -16,10 +16,11 @@
 package spanstore
 
 import (
+	"fmt"
 	"time"
 	"database/sql"
+	"strings"
 
-	"github.com/smartwalle/dbs"
 	"go.uber.org/zap"
 
 	"github.com/jaegertracing/jaeger/plugin/storage/mysql/spanstore/dbmodel"
@@ -64,7 +65,7 @@ func (b BackgroudStore)Start(){
 			return nil
 		}
 		errHandler = func(err error, batch []*dbmodel.Span) {
-			b.logger.Fatal("some error happens")  // TODO add error info
+			b.logger.Error("some error happens")  // TODO add error info
 		}
 	)
 
@@ -113,13 +114,21 @@ func (b BackgroudStore)Start(){
 }
 
 func (b BackgroudStore)batch_insert(spans []*dbmodel.Span) {
-    var ib = dbs.NewInsertBuilder()
-    ib.Table("traces")
-    ib.Columns("trace_id", "span_id", "span_hash", "parent_id", "operation_name", "flags",
-		"start_time", "duration", "tags", "logs", "refs", "process", "service_name")
+	table_name := "traces"
+	columns := []string{"`trace_id`", "`span_id`", "`span_hash`", "`parent_id`", "`operation_name`", "`flags`",
+						"`start_time`", "`duration`", "`tags`", "`logs`", "`refs`", "`process`", "`service_name`"}
+	sql := fmt.Sprintf("insert into %s (%s) values ", table_name, strings.Join(columns, ","))
+	var values []string
     for _, span := range spans {
-		ib.Values(span.TraceID, span.SpanID,span.SpanHash, span.ParentID, span.OperationName, span.Flags, span.StartTime,
-			span.Duration, span.Tags, span.Logs, span.Refs, span.Process, span.ServiceName)
-    }
-    ib.Exec(b.mysql_client)
+		value := fmt.Sprintf("('%s',%d,%d,%d,'%s',%d,%d,%d,'%s','%s','%s','%s','%s')", span.TraceID, span.SpanID,span.SpanHash, 
+								span.ParentID, span.OperationName, span.Flags, span.StartTime,span.Duration, span.Tags, span.Logs, 
+								span.Refs, span.Process, span.ServiceName)
+		values = append(values, value)
+	}
+	sql = sql + strings.Join(values, ",")
+	fmt.Println(sql)
+	res, err := b.mysql_client.Exec(sql)
+	if err != nil {
+		b.logger.Fatal("batch insert error", zap.Error(err))			
+	}
 }

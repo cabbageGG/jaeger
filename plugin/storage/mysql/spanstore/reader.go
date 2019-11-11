@@ -58,7 +58,7 @@ func (r *SpanReader) GetTrace(ctx context.Context, traceID model.TraceID) (*mode
 	trace_id := traceID.String()
 	rows, err := r.mysql_client.Query(queryTraceByTraceId, trace_id)
 	if err != nil {
-		r.logger.Fatal("queryTrace err", zap.Error(err))
+		r.logger.Error("queryTrace err", zap.Error(err))
 		return nil, err
 	}
 	defer rows.Close()
@@ -77,11 +77,11 @@ func (r *SpanReader) GetTrace(ctx context.Context, traceID model.TraceID) (*mode
 						 &dbspan.Refs, 
 						 &dbspan.Process)
 		if err != nil {
-			r.logger.Fatal("queryTrace scan err", zap.Error(err))
+			r.logger.Error("queryTrace scan err", zap.Error(err))
 		}
 		span, err := dbmodel.ToDomain(dbspan)
 		if err != nil {
-			r.logger.Fatal("queryTrace scan err", zap.Error(err))
+			r.logger.Error("queryTrace scan err", zap.Error(err))
 		}else{
 			spans = append(spans, span)
 		}
@@ -104,7 +104,7 @@ func (r *SpanReader) GetOperations(ctx context.Context, service string) ([]strin
 func (r *SpanReader) FindTraces(ctx context.Context, query *spanstore.TraceQueryParameters) ([]*model.Trace, error){
 	traceIds,err := r.FindTraceIDs(ctx, query) // must need FindTraceIDs because of the limit params
 	if err != nil {
-		r.logger.Fatal("FindTraceIDs err", zap.Error(err))
+		r.logger.Error("FindTraceIDs err", zap.Error(err))
 		return nil, err
 	}
 	if len(traceIds) <= 0 {
@@ -126,7 +126,7 @@ func (r *SpanReader) FindTraces(ctx context.Context, query *spanstore.TraceQuery
 	rows, err := r.mysql_client.Query(SQL)
 	defer rows.Close()
 	if err != nil {
-		r.logger.Fatal("FindTraces err", zap.Error(err))
+		r.logger.Error("FindTraces err", zap.Error(err))
 		return nil, err
 	}
 	for rows.Next() {
@@ -143,7 +143,7 @@ func (r *SpanReader) FindTraces(ctx context.Context, query *spanstore.TraceQuery
 						 &dbspan.Refs, 
 						 &dbspan.Process)
 		if err != nil {
-			r.logger.Fatal("queryTrace scan err", zap.Error(err))
+			r.logger.Error("queryTrace scan err", zap.Error(err))
 		}
 		spans, ok := traces_map[dbspan.TraceID]
 		if !ok {
@@ -151,7 +151,7 @@ func (r *SpanReader) FindTraces(ctx context.Context, query *spanstore.TraceQuery
 		}
 		span, err := dbmodel.ToDomain(dbspan)
 		if err != nil {
-			r.logger.Fatal("queryTrace scan err", zap.Error(err))
+			r.logger.Error("queryTrace scan err", zap.Error(err))
 		}else{
 			spans = append(spans, span)
 			traces_map[dbspan.TraceID] = spans
@@ -174,7 +174,7 @@ func (r *SpanReader) FindTraceIDs(ctx context.Context, query *spanstore.TraceQue
 	rows, err := r.mysql_client.Query(defaultQuery)
 	defer rows.Close()
 	if err != nil {
-		r.logger.Fatal("queryTraceIDs err", zap.Error(err))
+		r.logger.Error("queryTraceIDs err", zap.Error(err))
 		return nil, err
 	}
 	var traceIds []model.TraceID
@@ -182,11 +182,11 @@ func (r *SpanReader) FindTraceIDs(ctx context.Context, query *spanstore.TraceQue
 	for rows.Next() {
 		err := rows.Scan(&traceIdStr)
 		if err != nil {
-			r.logger.Fatal("queryTraceIDs scan err", zap.Error(err))
+			r.logger.Error("queryTraceIDs scan err", zap.Error(err))
 		}
 		traceId, err := model.TraceIDFromString(traceIdStr)
 		if err != nil {
-			r.logger.Fatal("queryTraceIDs TraceIDFromString err", zap.Error(err))
+			r.logger.Error("queryTraceIDs TraceIDFromString err", zap.Error(err))
 		}else {
 			traceIds = append(traceIds, traceId)
 		}
@@ -223,7 +223,7 @@ func gen_query_sql(query *spanstore.TraceQueryParameters) string {
 		conditions = append(conditions, fmt.Sprintf("duration>=%d", duration_min))
 	}
 	if http_code, ok := query.Tags["http.status_code"]; ok {
-		conditions = append(conditions, fmt.Sprintf("http_code=%d", http_code))
+		conditions = append(conditions, fmt.Sprintf("http_code=%s", http_code))
 	}
 	if isError, ok := query.Tags["error"]; ok {
 		conditions = append(conditions, fmt.Sprintf("error=%v", isError))
