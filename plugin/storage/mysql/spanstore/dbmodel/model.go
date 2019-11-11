@@ -52,6 +52,8 @@ type Span struct {
 	Refs          string  `db:"refs"`
 	Process       string  `db:"process"`
 	ServiceName   string  `db:"service_name"`
+	HttpCode      int64   `db:"http_code"`
+	Error         bool    `db:"error"`
 }
 
 // SpanRef is the UDT representation of a Jaeger Span Reference.

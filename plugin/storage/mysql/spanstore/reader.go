@@ -20,6 +20,7 @@ import (
 	"database/sql"
 	"fmt"
 	"time"
+	"strings"
 
 	_ "github.com/go-sql-driver/mysql"
 	"go.uber.org/zap"
@@ -194,63 +195,44 @@ func (r *SpanReader) FindTraceIDs(ctx context.Context, query *spanstore.TraceQue
 }
 
 func gen_query_sql(query *spanstore.TraceQueryParameters) string {
-	// TODO tai chou le
-	var first bool = true
+	// TODO need more graceful
 	defaultQuery := "SELECT distinct(trace_id) FROM traces"
 	// add condition
+	var conditions []string
 	if query.ServiceName != ""{
-		if first {
-			defaultQuery = defaultQuery + fmt.Sprintf(" where service_name='%s'", query.ServiceName)
-			first = false
-		}else{
-			defaultQuery = defaultQuery + fmt.Sprintf(" and service_name='%s'", query.OperationName)
-		}
+		conditions = append(conditions, fmt.Sprintf("service_name='%s'", query.ServiceName))
 	}
 	if query.OperationName != ""{
-		if first {
-			defaultQuery = defaultQuery + fmt.Sprintf(" where operation_name='%s'", query.OperationName)
-			first = false
-		}else{
-			defaultQuery = defaultQuery + fmt.Sprintf(" and operation_name='%s'", query.OperationName)
-		}
+		conditions = append(conditions, fmt.Sprintf("operation_name='%s'", query.OperationName))
 	}
 	var t time.Time
 	if query.StartTimeMax != t {
 		start_time_max := int64(model.TimeAsEpochMicroseconds(query.StartTimeMax))
-		if first {
-			defaultQuery = defaultQuery + fmt.Sprintf(" where start_time<=%d", start_time_max)
-			first = false
-		}else{
-			defaultQuery = defaultQuery + fmt.Sprintf(" and start_time<=%d", start_time_max)
-		}
+		conditions = append(conditions, fmt.Sprintf("start_time<=%d", start_time_max))
 	}
 	if query.StartTimeMin != t {
 		start_time_min := int64(model.TimeAsEpochMicroseconds(query.StartTimeMin))
-		if first {
-			defaultQuery = defaultQuery + fmt.Sprintf(" where start_time>=%d", start_time_min)
-			first = false
-		}else{
-			defaultQuery = defaultQuery + fmt.Sprintf(" and start_time>=%d", start_time_min)
-		}
+		conditions = append(conditions, fmt.Sprintf("start_time>=%d", start_time_min))
 	}
 	if query.DurationMax > 0 {
 		duration_max := int64(model.DurationAsMicroseconds(query.DurationMax))
-		if first {
-			defaultQuery = defaultQuery + fmt.Sprintf(" where duration<=%d", duration_max)
-			first = false
-		}else{
-			defaultQuery = defaultQuery + fmt.Sprintf(" and duration<=%d", duration_max)
-		}
+		conditions = append(conditions, fmt.Sprintf("duration<=%d", duration_max))
 	}
 	if query.DurationMin > 0 {
 		duration_min := int64(model.DurationAsMicroseconds(query.DurationMin))
-		if first {
-			defaultQuery = defaultQuery + fmt.Sprintf(" where duration>=%d", duration_min)
-			first = false
-		}else{
-			defaultQuery = defaultQuery + fmt.Sprintf(" and duration>=%d", duration_min)
-		}
+		conditions = append(conditions, fmt.Sprintf("duration>=%d", duration_min))
 	}
+	if http_code, ok := query.Tags["http.status_code"]; ok {
+		conditions = append(conditions, fmt.Sprintf("http_code=%d", http_code))
+	}
+	if isError, ok := query.Tags["error"]; ok {
+		conditions = append(conditions, fmt.Sprintf("error=%v", isError))
+	}
+
+	if len(conditions) > 0{
+		defaultQuery = defaultQuery + " where " + strings.Join(conditions, " AND ")
+	}
+
 	// add order
 	defaultQuery = defaultQuery + " order by start_time desc"
 	// default 20 if no query params

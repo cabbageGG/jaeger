@@ -143,6 +143,9 @@ func (c converter) fromDomain(span *model.Span) *Span {
 	refs, parent_id := c.toDBRefs(span.References)
 	udtProcess := c.toDBProcess(span.Process)
 	spanHash, _ := model.HashCode(span)
+	// TODO get error and http_code tag , then save to db
+	http_code_tag := getHttpCode(span.Tags)
+	error_tag := getError(span.Tags)
 
 	return &Span{
 		TraceID:       span.TraceID.String(),
@@ -158,7 +161,27 @@ func (c converter) fromDomain(span *model.Span) *Span {
 		Refs:          refs,
 		Process:       udtProcess,
 		ServiceName:   span.Process.ServiceName,
+		HttpCode:      http_code_tag,
+		Error:         error_tag,
 	}
+}
+
+func getHttpCode(tags []model.KeyValue) int64{
+	for _, tag := range tags {
+		if tag.GetKey() == "http.status_code" {
+			return tag.GetVInt64()
+		}
+	}
+	return 0
+}
+
+func getError(tags []model.KeyValue) bool{
+	for _, tag := range tags {
+		if tag.GetKey() == "error" {
+			return true
+		}
+	}
+	return false
 }
 
 func jsonMarshal(v interface{}) string {
