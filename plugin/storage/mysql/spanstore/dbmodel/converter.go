@@ -143,7 +143,6 @@ func (c converter) fromDomain(span *model.Span) *Span {
 	refs, parent_id := c.toDBRefs(span.References)
 	udtProcess := c.toDBProcess(span.Process)
 	spanHash, _ := model.HashCode(span)
-	// TODO get error and http_code tag , then save to db
 	http_code_tag := getHttpCode(span.Tags)
 	error_tag := getError(span.Tags)
 

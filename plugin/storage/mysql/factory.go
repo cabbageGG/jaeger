@@ -31,6 +31,10 @@ import (
 	"github.com/jaegertracing/jaeger/plugin/storage/mysql/spanstore/dbmodel"
 )
 
+const (
+	SpanDropCountName = "mysql_span_drop_count"
+)
+
 // Factory implements storage.Factory and creates storage components backed by mysql store.
 type Factory struct {
 	options        Options
@@ -40,6 +44,11 @@ type Factory struct {
 	cacheStore     *mSpanStore.CacheStore
 	backgroudStore *mSpanStore.BackgroudStore
 	eventQueue     chan *dbmodel.Span
+
+	metrics struct {
+		// SpanDropCount returns the count of dropped span when the queue is full
+		SpanDropCount metrics.Counter
+	}
 }
 
 // NewFactory creates a new Factory.
@@ -76,6 +85,8 @@ func (f *Factory) Initialize(metricsFactory metrics.Factory, logger *zap.Logger)
 		f.options.Configuration.LingerTime, f.options.Configuration.Batchsize, f.options.Configuration.Workers)
 	f.backgroudStore.Start()
 
+	f.metrics.SpanDropCount = metricsFactory.Counter(metrics.Options{Name: SpanDropCountName})
+
 	logger.Info("Mysql storage initialized successed")
 	return nil
 }
@@ -87,7 +98,7 @@ func (f *Factory) CreateSpanReader() (spanstore.Reader, error) {
 
 // CreateSpanWriter implements storage.Factory
 func (f *Factory) CreateSpanWriter() (spanstore.Writer, error) {
-	return mSpanStore.NewSpanWriter(f.eventQueue, f.cacheStore, f.logger), nil
+	return mSpanStore.NewSpanWriter(f.eventQueue, f.cacheStore, f.logger, f.metrics.SpanDropCount), nil
 }
 
 // CreateDependencyReader implements storage.Factory

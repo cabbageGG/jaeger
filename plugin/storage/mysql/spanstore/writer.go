@@ -17,6 +17,7 @@ package spanstore
 
 import (
 	"go.uber.org/zap"
+	"github.com/uber/jaeger-lib/metrics"
 
 	"github.com/jaegertracing/jaeger/model"
 	"github.com/jaegertracing/jaeger/plugin/storage/mysql/spanstore/dbmodel"
@@ -27,13 +28,26 @@ type SpanWriter struct {
 	eventQueue    chan *dbmodel.Span
 	cache         *CacheStore
 	logger        *zap.Logger
+	WriteMetrics  
 }
 
-func NewSpanWriter(ch chan *dbmodel.Span, cacheStore *CacheStore, logger *zap.Logger) *SpanWriter{
+type WriteMetrics struct {
+	dropSpanCount      metrics.Counter
+}
+
+func NewWriteMetrics(dropSpanCounter metrics.Counter) WriteMetrics{
+	return WriteMetrics{
+		dropSpanCount: dropSpanCounter,
+	}
+}
+
+func NewSpanWriter(ch chan *dbmodel.Span, cacheStore *CacheStore, logger *zap.Logger, dropSpanCounter metrics.Counter) *SpanWriter{
+	writeMetrics := NewWriteMetrics(dropSpanCounter)
 	return &SpanWriter{
 		eventQueue: ch,
 		cache: cacheStore,
 		logger: logger,
+		WriteMetrics: writeMetrics,
 	}
 }
 
@@ -53,6 +67,7 @@ func (w *SpanWriter) WriteSpan(span *model.Span) error {
 	default:
 		// TODO report metric
 		w.logger.Error("no span sent")
+		w.dropSpanCount.Inc(1)
 	}
 
 	// use cache to save the less data, note to load the data to cache when start init 
