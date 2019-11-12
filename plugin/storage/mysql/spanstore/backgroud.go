@@ -22,20 +22,22 @@ import (
 	"strings"
 
 	"go.uber.org/zap"
+	"github.com/uber/jaeger-lib/metrics"
 
 	"github.com/jaegertracing/jaeger/plugin/storage/mysql/spanstore/dbmodel"
 )
 
 type BackgroudStore struct{
-	mysql_client   *sql.DB 
-	eventQueue     chan *dbmodel.Span
-	logger         *zap.Logger
-	lingerTime     time.Duration
-	batchSize      int
-	workers        int
+	mysql_client   			*sql.DB 
+	eventQueue     			chan *dbmodel.Span
+	logger         			*zap.Logger
+	lingerTime     			time.Duration
+	batchSize      			int
+	workers        			int
+	MysqlBatchInsertError   metrics.Counter
 }
 
-func NewBackgroudStore(client *sql.DB, ch chan *dbmodel.Span, logger *zap.Logger, lingerTime int, batch int, workers int)*BackgroudStore{
+func NewBackgroudStore(client *sql.DB, ch chan *dbmodel.Span, logger *zap.Logger, lingerTime int, batch int, workers int, MysqlBatchInsertError metrics.Counter)*BackgroudStore{
 	return &BackgroudStore{
 		mysql_client: client,
 		eventQueue: ch, 
@@ -43,6 +45,7 @@ func NewBackgroudStore(client *sql.DB, ch chan *dbmodel.Span, logger *zap.Logger
 		lingerTime: time.Duration(uint64(lingerTime)) * time.Millisecond,
 		batchSize: batch,
 		workers: workers,
+		MysqlBatchInsertError: MysqlBatchInsertError,
 	}
 }
 
@@ -70,7 +73,8 @@ func (b BackgroudStore)Start(){
 		}
 		errHandler = func(err error, batch []*dbmodel.Span) {
 			// TODO add metrics and alert
-			b.logger.Error("some error happens when batch insert", zap.Error(err))  // TODO add error info
+			b.logger.Error("some error happens when batch insert", zap.Error(err))  
+			b.MysqlBatchInsertError.Inc(1)
 		}
 	)
 

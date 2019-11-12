@@ -32,7 +32,8 @@ import (
 )
 
 const (
-	SpanDropCountName = "mysql_span_drop_count"
+	SpanDropCountName 				= "mysql_span_drop_count"
+	MysqlBatchInsertErrorName       = "mysql_batch_insert_error_count"
 )
 
 // Factory implements storage.Factory and creates storage components backed by mysql store.
@@ -47,7 +48,8 @@ type Factory struct {
 
 	metrics struct {
 		// SpanDropCount returns the count of dropped span when the queue is full
-		SpanDropCount metrics.Counter
+		SpanDropCount 			metrics.Counter
+		MysqlBatchInsertError   metrics.Counter
 	}
 }
 
@@ -70,6 +72,9 @@ func (f *Factory) InitFromViper(v *viper.Viper) {
 func (f *Factory) Initialize(metricsFactory metrics.Factory, logger *zap.Logger) error {
 	f.metricsFactory, f.logger = metricsFactory, logger
 
+	f.metrics.SpanDropCount = metricsFactory.Counter(metrics.Options{Name: SpanDropCountName})
+	f.metrics.MysqlBatchInsertError = metricsFactory.Counter(metrics.Options{Name: MysqlBatchInsertErrorName})
+
 	db, err := sql.Open("mysql", f.options.Configuration.Url) // 建立一个mysql连接对象
 	if err != nil {
 		logger.Fatal("Cannot create mysql session", zap.Error(err))
@@ -81,11 +86,9 @@ func (f *Factory) Initialize(metricsFactory metrics.Factory, logger *zap.Logger)
 	f.cacheStore.Initialize()
 
 	f.eventQueue = make(chan *dbmodel.Span, f.options.Configuration.QueueLength) 
-	f.backgroudStore = mSpanStore.NewBackgroudStore(f.store, f.eventQueue, f.logger, 
-		f.options.Configuration.LingerTime, f.options.Configuration.Batchsize, f.options.Configuration.Workers)
+	f.backgroudStore = mSpanStore.NewBackgroudStore(f.store, f.eventQueue, f.logger, f.options.Configuration.LingerTime,
+		f.options.Configuration.Batchsize, f.options.Configuration.Workers, f.metrics.MysqlBatchInsertError)
 	f.backgroudStore.Start()
-
-	f.metrics.SpanDropCount = metricsFactory.Counter(metrics.Options{Name: SpanDropCountName})
 
 	logger.Info("Mysql storage initialized successed")
 	return nil

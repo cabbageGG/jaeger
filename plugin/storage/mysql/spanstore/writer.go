@@ -65,7 +65,7 @@ func (w *SpanWriter) WriteSpan(span *model.Span) error {
 	case w.eventQueue <- ds:
 		w.logger.Info("sent one span")
 	default:
-		// TODO report metric
+		// report metric
 		w.logger.Error("no span sent")
 		w.dropSpanCount.Inc(1)
 	}
