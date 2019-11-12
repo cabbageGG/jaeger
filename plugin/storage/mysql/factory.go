@@ -71,8 +71,9 @@ func (f *Factory) Initialize(metricsFactory metrics.Factory, logger *zap.Logger)
 	f.cacheStore = mSpanStore.NewCacheStore(f.store, f.logger)
 	f.cacheStore.Initialize()
 
-	f.eventQueue = make(chan *dbmodel.Span, 100000) // TODO config
-	f.backgroudStore = mSpanStore.NewBackgroudStore(f.store, f.eventQueue, f.logger)
+	f.eventQueue = make(chan *dbmodel.Span, f.options.Configuration.QueueLength) 
+	f.backgroudStore = mSpanStore.NewBackgroudStore(f.store, f.eventQueue, f.logger, 
+		f.options.Configuration.LingerTime, f.options.Configuration.Batchsize, f.options.Configuration.Workers)
 	f.backgroudStore.Start()
 
 	logger.Info("Mysql storage initialized successed")

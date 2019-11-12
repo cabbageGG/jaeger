@@ -51,7 +51,8 @@ func (w *SpanWriter) WriteSpan(span *model.Span) error {
 	case w.eventQueue <- ds:
 		w.logger.Info("sent one span")
 	default:
-		w.logger.Info("no span sent")
+		// TODO report metric
+		w.logger.Error("no span sent")
 	}
 
 	// use cache to save the less data, note to load the data to cache when start init 

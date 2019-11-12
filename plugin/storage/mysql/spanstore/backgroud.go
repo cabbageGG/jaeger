@@ -28,18 +28,21 @@ import (
 
 type BackgroudStore struct{
 	mysql_client   *sql.DB 
-	EventQueue     chan *dbmodel.Span
+	eventQueue     chan *dbmodel.Span
 	logger         *zap.Logger
-	// lingerTime     time.Time
-	// BatchSize      int
-	// workers        int
+	lingerTime     time.Duration
+	batchSize      int
+	workers        int
 }
 
-func NewBackgroudStore(client *sql.DB, ch chan *dbmodel.Span, logger *zap.Logger)*BackgroudStore{
+func NewBackgroudStore(client *sql.DB, ch chan *dbmodel.Span, logger *zap.Logger, lingerTime int, batch int, workers int)*BackgroudStore{
 	return &BackgroudStore{
 		mysql_client: client,
-		EventQueue: ch, 
+		eventQueue: ch, 
 		logger: logger,
+		lingerTime: time.Duration(uint64(lingerTime)) * time.Millisecond,
+		batchSize: batch,
+		workers: workers,
 	}
 }
 
@@ -51,21 +54,23 @@ func (b BackgroudStore) Close() error {
 
 func (b BackgroudStore)Start(){
 	var (
-		eventQueue     = b.EventQueue
-		batchSize      = 50 //m.batchSize
-		workers        = 8 //m.workers
-		lingerTime     = 200 * time.Millisecond //m.lingerTime
+		eventQueue     = b.eventQueue
+		batchSize      = b.batchSize //default 50 
+		workers        = b.workers //default 8
+		lingerTime     = b.lingerTime // default 200 * time.Millisecond 
 		batchProcessor = func(batch []*dbmodel.Span) error {
 			if len(batch) > 0{
 				b.logger.Info("process items", zap.Int("batch", len(batch)))
-				b.batch_insert(batch)
+				err := b.batch_insert(batch)
+				return err
 			}else{
 				b.logger.Info("batch is 0")
 			}
 			return nil
 		}
 		errHandler = func(err error, batch []*dbmodel.Span) {
-			b.logger.Error("some error happens")  // TODO add error info
+			// TODO add metrics and alert
+			b.logger.Error("some error happens when batch insert", zap.Error(err))  // TODO add error info
 		}
 	)
 
@@ -113,7 +118,7 @@ func (b BackgroudStore)Start(){
 	}
 }
 
-func (b BackgroudStore)batch_insert(spans []*dbmodel.Span) {
+func (b BackgroudStore)batch_insert(spans []*dbmodel.Span) error{
 	table_name := "traces"
 	columns := []string{"`trace_id`", "`span_id`", "`span_hash`", "`parent_id`", "`operation_name`", "`flags`",
 						"`start_time`", "`duration`", "`tags`", "`logs`", "`refs`", "`process`", "`service_name`"}
@@ -126,9 +131,10 @@ func (b BackgroudStore)batch_insert(spans []*dbmodel.Span) {
 		values = append(values, value)
 	}
 	sql = sql + strings.Join(values, ",")
-	fmt.Println(sql)
-	res, err := b.mysql_client.Exec(sql)
+	// fmt.Println(sql)
+	_, err := b.mysql_client.Exec(sql)
 	if err != nil {
-		b.logger.Fatal("batch insert error", zap.Error(err))			
+		b.logger.Error("batch insert error", zap.Error(err))			
 	}
+	return err
 }

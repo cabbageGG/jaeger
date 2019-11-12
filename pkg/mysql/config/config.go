@@ -22,4 +22,8 @@ type Configuration struct {
 	Password    string    `yaml:"password"`
 	Db          string    `yaml:"db"`
 	Url         string    `yaml:"url"`
+	QueueLength int       `yaml:"queueLength"`
+	LingerTime  int       `yaml:"lingerTime"`
+	Batchsize   int       `yaml:"batchsize"`
+	Workers     int       `yaml:"workers"`
 }
