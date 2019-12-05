@@ -21,7 +21,6 @@ import (
 	"flag"
 	"time"
 
-	"github.com/dgraph-io/badger"
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/spf13/viper"
 	"github.com/uber/jaeger-lib/metrics"
@@ -102,7 +101,7 @@ func (f *Factory) Initialize(metricsFactory metrics.Factory, logger *zap.Logger)
 	return nil
 }
 
-// Maintenance starts a background maintenance job for the badger K/V store, such as ValueLogGC
+// Maintenance starts a background maintenance job for the clean mysql expired data
 func (f *Factory) maintenance() {
 	expired := int64(f.options.Configuration.Expired * 3600 * 24)
 	interval := time.Duration(f.options.Configuration.Interval) * time.Minute
