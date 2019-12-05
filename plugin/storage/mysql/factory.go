@@ -114,12 +114,14 @@ func (f *Factory) maintenance() {
 		case <-maintenanceTicker.C:
             // delete expired mysql data
 			startTime := (time.Now().Unix() - expired) * 1000000
-			sql := fmt.Sprintf("delete from traces where start_time <= %s", startTime)
-			_, err := f.store.Exec(sql)
+			sql := fmt.Sprintf("delete from traces where start_time <= %d", startTime)
+			results, err := f.store.Exec(sql)
 			if err != nil {
 				f.logger.Error("delete expired mysql data error", zap.Error(err))			
 			}else{
-				f.logger.Info("delete expired mysql data success", zap.Int("expired(d)", f.options.Configuration.Expired), zap.Int("interval(m)", f.options.Configuration.Interval))
+				f.logger.Info("delete expired mysql data success", zap.Int("expired(d)", f.options.Configuration.Expired), 
+																   zap.Int("interval(m)", f.options.Configuration.Interval),
+																   zap.Int("results", results))
 			}
 			// todo metrics
 		}
