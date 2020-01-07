@@ -134,8 +134,7 @@ func (b BackgroudStore)batch_insert(spans []*dbmodel.Span) error{
 	}
 	_, err := ib.Exec(b.mysql_client)
 	if err != nil {
-		fmt.Println(ib.ToSQL)
-		b.logger.Error("batch insert error", zap.Error(err))			
+		b.logger.Error("batch insert error", zap.Error(err), zap.String("sql", ib.ToSQL))			
 	}	
 	return err	
 }
