@@ -17,10 +17,13 @@ package auth
 import (
 	"flag"
 	"strings"
+
+	"github.com/jaegertracing/jaeger/pkg/config/tlscfg"
 )
 
 const (
-	suffixAuthentication = ".authentication"
+	suffixAuthentication  = ".authentication"
+	defaultAuthentication = none
 
 	// Kerberos configuration options
 	kerberosPrefix            = ".kerberos"
@@ -32,7 +35,6 @@ const (
 	suffixKerberosConfig      = ".config-file"
 	suffixKerberosKeyTab      = ".keytab-file"
 
-	defaultAuthentication      = none
 	defaultKerberosConfig      = "/etc/krb5.conf"
 	defaultKerberosUseKeyTab   = false
 	defaultKerberosServiceName = "kafka"
@@ -40,6 +42,13 @@ const (
 	defaultKerberosPassword    = ""
 	defaultKerberosUsername    = ""
 	defaultKerberosKeyTab      = "/etc/security/kafka.keytab"
+
+	plainTextPrefix         = ".plaintext"
+	suffixPlainTextUserName = ".username"
+	suffixPlainTextPassword = ".password"
+
+	defaultPlainTextUserName = ""
+	defaultPlainTextPassword = ""
 )
 
 func addKerberosFlags(configPrefix string, flagSet *flag.FlagSet) {
@@ -73,6 +82,17 @@ func addKerberosFlags(configPrefix string, flagSet *flag.FlagSet) {
 		"Path to keytab file. i.e /etc/security/kafka.keytab")
 }
 
+func addPlainTextFlags(configPrefix string, flagSet *flag.FlagSet) {
+	flagSet.String(
+		configPrefix+plainTextPrefix+suffixPlainTextUserName,
+		defaultPlainTextUserName,
+		"The plaintext Username for SASL/PLAIN authentication")
+	flagSet.String(
+		configPrefix+plainTextPrefix+suffixPlainTextPassword,
+		defaultPlainTextPassword,
+		"The plaintext Password for SASL/PLAIN authentication")
+}
+
 // AddFlags add configuration flags to a flagSet.
 func AddFlags(configPrefix string, flagSet *flag.FlagSet) {
 	flagSet.String(
@@ -81,4 +101,13 @@ func AddFlags(configPrefix string, flagSet *flag.FlagSet) {
 		"Authentication type used to authenticate with kafka cluster. e.g. "+strings.Join(authTypes, ", "),
 	)
 	addKerberosFlags(configPrefix, flagSet)
+
+	tlsClientConfig := tlscfg.ClientFlagsConfig{
+		Prefix:         configPrefix,
+		ShowEnabled:    true,
+		ShowServerName: true,
+	}
+	tlsClientConfig.AddFlags(flagSet)
+
+	addPlainTextFlags(configPrefix, flagSet)
 }

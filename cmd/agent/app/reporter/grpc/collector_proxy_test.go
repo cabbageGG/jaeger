@@ -15,8 +15,7 @@
 package grpc
 
 import (
-	"crypto/x509"
-	"errors"
+	"io"
 	"net"
 	"testing"
 	"time"
@@ -31,18 +30,7 @@ import (
 	"github.com/jaegertracing/jaeger/thrift-gen/jaeger"
 )
 
-// This test is only for coverage.
-func TestSystemCertPoolError(t *testing.T) {
-	fakeErr := errors.New("fake error")
-	systemCertPool = func() (*x509.CertPool, error) {
-		return nil, fakeErr
-	}
-	_, err := NewCollectorProxy(&ConnBuilder{
-		CollectorHostPorts: []string{"foo", "bar"},
-		TLS:                true,
-	}, nil, nil, zap.NewNop())
-	assert.Equal(t, fakeErr, err)
-}
+var _ io.Closer = (*ProxyBuilder)(nil)
 
 func TestMultipleCollectors(t *testing.T) {
 	spanHandler1 := &mockSpanHandler{}

@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -26,7 +27,6 @@ import (
 	"github.com/opentracing/opentracing-go"
 	ottag "github.com/opentracing/opentracing-go/ext"
 	otlog "github.com/opentracing/opentracing-go/log"
-	"github.com/pkg/errors"
 	"github.com/uber/jaeger-lib/metrics"
 	"go.uber.org/zap"
 
@@ -64,22 +64,22 @@ const (
 
 var (
 	// ErrServiceNameNotSet occurs when attempting to query with an empty service name
-	ErrServiceNameNotSet = errors.New("Service Name must be set")
+	ErrServiceNameNotSet = errors.New("service Name must be set")
 
 	// ErrStartTimeMinGreaterThanMax occurs when start time min is above start time max
-	ErrStartTimeMinGreaterThanMax = errors.New("Start Time Minimum is above Maximum")
+	ErrStartTimeMinGreaterThanMax = errors.New("start Time Minimum is above Maximum")
 
 	// ErrDurationMinGreaterThanMax occurs when duration min is above duration max
-	ErrDurationMinGreaterThanMax = errors.New("Duration Minimum is above Maximum")
+	ErrDurationMinGreaterThanMax = errors.New("duration Minimum is above Maximum")
 
 	// ErrMalformedRequestObject occurs when a request object is nil
-	ErrMalformedRequestObject = errors.New("Malformed request object")
+	ErrMalformedRequestObject = errors.New("malformed request object")
 
 	// ErrStartAndEndTimeNotSet occurs when start time and end time are not set
-	ErrStartAndEndTimeNotSet = errors.New("Start and End Time must be set")
+	ErrStartAndEndTimeNotSet = errors.New("start and End Time must be set")
 
 	// ErrUnableToFindTraceIDAggregation occurs when an aggregation query for TraceIDs fail.
-	ErrUnableToFindTraceIDAggregation = errors.New("Could not find aggregation of traceIDs")
+	ErrUnableToFindTraceIDAggregation = errors.New("could not find aggregation of traceIDs")
 
 	defaultMaxDuration = model.DurationAsMicroseconds(time.Hour * 24)
 
@@ -90,7 +90,6 @@ var (
 
 // SpanReader can query for and load traces from ElasticSearch
 type SpanReader struct {
-	ctx    context.Context
 	client es.Client
 	logger *zap.Logger
 	// The age of the oldest service/operation we will look for. Because indices in ElasticSearch are by day,
@@ -119,9 +118,7 @@ type SpanReaderParams struct {
 
 // NewSpanReader returns a new SpanReader with a metrics.
 func NewSpanReader(p SpanReaderParams) *SpanReader {
-	ctx := context.Background()
 	return &SpanReader{
-		ctx:                     ctx,
 		client:                  p.Client,
 		logger:                  p.Logger,
 		maxSpanAge:              p.MaxSpanAge,
@@ -214,11 +211,11 @@ func (s *SpanReader) collectSpans(esSpansRaw []*elastic.SearchHit) ([]*model.Spa
 	for i, esSpanRaw := range esSpansRaw {
 		jsonSpan, err := s.unmarshalJSONSpan(esSpanRaw)
 		if err != nil {
-			return nil, errors.Wrap(err, "Marshalling JSON to span object failed")
+			return nil, fmt.Errorf("marshalling JSON to span object failed: %w", err)
 		}
 		span, err := s.spanConverter.SpanToDomain(jsonSpan)
 		if err != nil {
-			return nil, errors.Wrap(err, "Converting JSONSpan to domain Span failed")
+			return nil, fmt.Errorf("converting JSONSpan to domain Span failed: %w", err)
 		}
 		spans[i] = span
 	}
@@ -248,12 +245,28 @@ func (s *SpanReader) GetServices(ctx context.Context) ([]string, error) {
 }
 
 // GetOperations returns all operations for a specific service traced by Jaeger
-func (s *SpanReader) GetOperations(ctx context.Context, service string) ([]string, error) {
+func (s *SpanReader) GetOperations(
+	ctx context.Context,
+	query spanstore.OperationQueryParameters,
+) ([]spanstore.Operation, error) {
 	span, ctx := opentracing.StartSpanFromContext(ctx, "GetOperations")
 	defer span.Finish()
 	currentTime := time.Now()
 	jaegerIndices := s.timeRangeIndices(s.serviceIndexPrefix, currentTime.Add(-s.maxSpanAge), currentTime)
-	return s.serviceOperationStorage.getOperations(ctx, jaegerIndices, service)
+	operations, err := s.serviceOperationStorage.getOperations(ctx, jaegerIndices, query.ServiceName)
+	if err != nil {
+		return nil, err
+	}
+
+	// TODO: https://github.com/jaegertracing/jaeger/issues/1923
+	// 	- return the operations with actual span kind that meet requirement
+	var result []spanstore.Operation
+	for _, operation := range operations {
+		result = append(result, spanstore.Operation{
+			Name: operation,
+		})
+	}
+	return result, err
 }
 
 func bucketToStringArray(buckets []*elastic.AggregationBucketKeyItem) ([]string, error) {
@@ -261,7 +274,7 @@ func bucketToStringArray(buckets []*elastic.AggregationBucketKeyItem) ([]string,
 	for i, keyitem := range buckets {
 		str, ok := keyitem.Key.(string)
 		if !ok {
-			return nil, errors.New("Non-string key found in aggregation")
+			return nil, errors.New("non-string key found in aggregation")
 		}
 		strings[i] = str
 	}
@@ -324,7 +337,7 @@ func (s *SpanReader) multiRead(ctx context.Context, traceIDs []model.TraceID, st
 		}
 		searchRequests := make([]*elastic.SearchRequest, len(traceIDs))
 		for i, traceID := range traceIDs {
-			query := elastic.NewTermQuery("traceID", traceID.String())
+			query := buildTraceByIDQuery(traceID)
 			if val, ok := searchAfterTime[traceID]; ok {
 				nextTime = val
 			}
@@ -337,7 +350,7 @@ func (s *SpanReader) multiRead(ctx context.Context, traceIDs []model.TraceID, st
 		}
 		// set traceIDs to empty
 		traceIDs = nil
-		results, err := s.client.MultiSearch().Add(searchRequests...).Index(indices...).Do(s.ctx)
+		results, err := s.client.MultiSearch().Add(searchRequests...).Index(indices...).Do(ctx)
 
 		if err != nil {
 			logErrorToSpan(childSpan, err)
@@ -380,15 +393,42 @@ func (s *SpanReader) multiRead(ctx context.Context, traceIDs []model.TraceID, st
 	return traces, nil
 }
 
+func buildTraceByIDQuery(traceID model.TraceID) elastic.Query {
+	traceIDStr := traceID.String()
+	if traceIDStr[0] != '0' {
+		return elastic.NewTermQuery(traceIDField, traceIDStr)
+	}
+	// https://github.com/jaegertracing/jaeger/pull/1956 added leading zeros to IDs
+	// So we need to also read IDs without leading zeros for compatibility with previously saved data.
+	// TODO remove in newer versions, added in Jaeger 1.16
+	var legacyTraceID string
+	if traceID.High == 0 {
+		legacyTraceID = fmt.Sprintf("%x", traceID.Low)
+	} else {
+		legacyTraceID = fmt.Sprintf("%x%016x", traceID.High, traceID.Low)
+	}
+	return elastic.NewBoolQuery().Should(
+		elastic.NewTermQuery(traceIDField, traceIDStr).Boost(2),
+		elastic.NewTermQuery(traceIDField, legacyTraceID))
+}
+
 func convertTraceIDsStringsToModels(traceIDs []string) ([]model.TraceID, error) {
-	traceIDsModels := make([]model.TraceID, len(traceIDs))
-	for i, ID := range traceIDs {
+	traceIDsMap := map[model.TraceID]bool{}
+	// https://github.com/jaegertracing/jaeger/pull/1956 added leading zeros to IDs
+	// So we need to also read IDs without leading zeros for compatibility with previously saved data.
+	// That means the input to this function may contain logically identical trace IDs but formatted
+	// with or without padding, and we need to dedupe them.
+	// TODO remove deduping in newer versions, added in Jaeger 1.16
+	traceIDsModels := make([]model.TraceID, 0, len(traceIDs))
+	for _, ID := range traceIDs {
 		traceID, err := model.TraceIDFromString(ID)
 		if err != nil {
-			return nil, errors.Wrap(err, fmt.Sprintf("Making traceID from string '%s' failed", ID))
+			return nil, fmt.Errorf("making traceID from string '%s' failed: %w", ID, err)
 		}
-
-		traceIDsModels[i] = traceID
+		if _, ok := traceIDsMap[traceID]; !ok {
+			traceIDsMap[traceID] = true
+			traceIDsModels = append(traceIDsModels, traceID)
+		}
 	}
 
 	return traceIDsModels, nil
@@ -471,7 +511,6 @@ func (s *SpanReader) findTraceIDs(ctx context.Context, traceQuery *spanstore.Tra
 	//  }
 	aggregation := s.buildTraceIDAggregation(traceQuery.NumTraces)
 	boolQuery := s.buildFindTraceIDsQuery(traceQuery)
-
 	jaegerIndices := s.timeRangeIndices(s.spanIndexPrefix, traceQuery.StartTimeMin, traceQuery.StartTimeMax)
 
 	searchService := s.client.Search(jaegerIndices...).
@@ -480,9 +519,9 @@ func (s *SpanReader) findTraceIDs(ctx context.Context, traceQuery *spanstore.Tra
 		IgnoreUnavailable(true).
 		Query(boolQuery)
 
-	searchResult, err := searchService.Do(s.ctx)
+	searchResult, err := searchService.Do(ctx)
 	if err != nil {
-		return nil, errors.Wrap(err, "Search service failed")
+		return nil, fmt.Errorf("search services failed: %w", err)
 	}
 	if searchResult.Aggregations == nil {
 		return []string{}, nil
@@ -583,14 +622,14 @@ func (s *SpanReader) buildNestedQuery(field string, k string, v string) elastic.
 	keyField := fmt.Sprintf("%s.%s", field, tagKeyField)
 	valueField := fmt.Sprintf("%s.%s", field, tagValueField)
 	keyQuery := elastic.NewMatchQuery(keyField, k)
-	valueQuery := elastic.NewMatchQuery(valueField, v)
+	valueQuery := elastic.NewRegexpQuery(valueField, v)
 	tagBoolQuery := elastic.NewBoolQuery().Must(keyQuery, valueQuery)
 	return elastic.NewNestedQuery(field, tagBoolQuery)
 }
 
 func (s *SpanReader) buildObjectQuery(field string, k string, v string) elastic.Query {
 	keyField := fmt.Sprintf("%s.%s", field, k)
-	keyQuery := elastic.NewMatchQuery(keyField, v)
+	keyQuery := elastic.NewRegexpQuery(keyField, v)
 	return elastic.NewBoolQuery().Must(keyQuery)
 }
 

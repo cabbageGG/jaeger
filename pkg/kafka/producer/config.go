@@ -15,6 +15,8 @@
 package producer
 
 import (
+	"time"
+
 	"github.com/Shopify/sarama"
 
 	"github.com/jaegertracing/jaeger/pkg/kafka/auth"
@@ -32,6 +34,9 @@ type Configuration struct {
 	Compression      sarama.CompressionCodec
 	CompressionLevel int
 	ProtocolVersion  string
+	BatchLinger      time.Duration
+	BatchSize        int
+	BatchMaxMessages int
 	auth.AuthenticationConfig
 }
 
@@ -42,13 +47,18 @@ func (c *Configuration) NewProducer() (sarama.AsyncProducer, error) {
 	saramaConfig.Producer.Compression = c.Compression
 	saramaConfig.Producer.CompressionLevel = c.CompressionLevel
 	saramaConfig.Producer.Return.Successes = true
-	c.AuthenticationConfig.SetConfiguration(saramaConfig)
+	saramaConfig.Producer.Flush.Bytes = c.BatchSize
+	saramaConfig.Producer.Flush.Frequency = c.BatchLinger
+	saramaConfig.Producer.Flush.MaxMessages = c.BatchMaxMessages
 	if len(c.ProtocolVersion) > 0 {
 		ver, err := sarama.ParseKafkaVersion(c.ProtocolVersion)
 		if err != nil {
 			return nil, err
 		}
 		saramaConfig.Version = ver
+	}
+	if err := c.AuthenticationConfig.SetConfiguration(saramaConfig); err != nil {
+		return nil, err
 	}
 	return sarama.NewAsyncProducer(c.Brokers, saramaConfig)
 }
